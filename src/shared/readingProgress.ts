@@ -1,0 +1,40 @@
+export type SavedDocumentType =
+  | 'txt'
+  | 'md'
+  | 'pdf'
+  | 'docx'
+  | 'web'
+  | 'web-snapshot'
+  | 'unknown'
+
+export interface ReadingProgress {
+  docPath: string
+  updatedAt: string
+  /** PDF 当前页（1-based） */
+  pdfPage?: number
+  /** PDF 滚动比例 0–1 */
+  pdfScrollRatio?: number
+  /** PDF 缩放 */
+  pdfScale?: number
+  /** 通用滚动像素 */
+  scrollTop?: number
+  /** 通用滚动比例 0–1 */
+  scrollRatio?: number
+  /** Monaco 光标/滚动锚点行（1-based） */
+  monacoLine?: number
+  monacoColumn?: number
+  /** Markdown 视图模式 */
+  mdViewMode?: 'preview' | 'source'
+}
+
+export interface SavedOpenDocument {
+  path: string
+  name: string
+  type: SavedDocumentType
+}
+
+export interface WorkspaceSession {
+  documents: SavedOpenDocument[]
+  activePath: string | null
+  updatedAt: string
+}

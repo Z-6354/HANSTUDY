@@ -97,3 +97,22 @@ export function formatPhoneDisplay(phone: string): string {
   }
   return phone
 }
+
+/** 判断已存站点 origin 是否与当前页匹配（含子域） */
+export function credentialsOriginMatch(savedOrigin: string, pageOrigin: string): boolean {
+  const saved = webPageOrigin(savedOrigin) || savedOrigin.trim()
+  const current = webPageOrigin(pageOrigin) || pageOrigin.trim()
+  if (!saved || !current) return false
+  if (saved === current) return true
+  try {
+    const savedHost = new URL(saved).hostname
+    const currentHost = new URL(current).hostname
+    return (
+      savedHost === currentHost ||
+      currentHost.endsWith(`.${savedHost}`) ||
+      savedHost.endsWith(`.${currentHost}`)
+    )
+  } catch {
+    return false
+  }
+}

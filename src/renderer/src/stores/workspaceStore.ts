@@ -1,7 +1,7 @@
 import { create } from 'zustand'
-import { resolveWebInput, webDisplayName } from '../../../shared/webCrop'
+import { resolveWebInput, webDisplayName } from '@shared/webCrop'
 import { getSearchEngine, getWebBrowseLayoutPrefs } from './appSettingsStore'
-import { formatWebSnapshotTabTitle, type WebSnapshotMeta } from '../../../shared/webSnapshot'
+import { formatWebSnapshotTabTitle, type WebSnapshotMeta } from '@shared/webSnapshot'
 import type { AnnotationTool, ChatMessage, TextSelectionContext } from '../types/global.d'
 
 export type DocumentType = 'txt' | 'md' | 'pdf' | 'docx' | 'web' | 'web-snapshot' | 'settings' | 'unknown'
@@ -9,6 +9,13 @@ export type SidebarTab = 'explorer' | 'notes' | 'web'
 export type SettingsSection = 'system' | 'skill' | 'mcp'
 
 export type LayoutPanelId = 'sidebar' | 'tabBar' | 'annotationToolbar' | 'aiPanel'
+
+export type ViewerCommandKind = 'find' | 'selectAll'
+
+export interface ViewerCommand {
+  seq: number
+  kind: ViewerCommandKind
+}
 
 export interface FloatingToolbarState {
   x: number
@@ -42,6 +49,15 @@ export interface WebViewSession {
   canGoForward: boolean
 }
 
+interface LayoutRestore {
+  showSidebar: boolean
+  showAIPanel: boolean
+}
+
+interface ViewerStatus {
+  detail?: string
+}
+
 interface WorkspaceState {
   documents: OpenDocument[]
   activeDocumentId: string | null
@@ -65,9 +81,21 @@ interface WorkspaceState {
   chatAttachedDoc: { path: string; name: string } | null
   chatDocContext: string | null
   webSnapshotTick: number
-  webSession: WebViewSession | null
+  webSessions: Record<string, WebViewSession>
   webNavSeq: number
   webNavAction: { seq: number; action: WebNavAction; url?: string } | null
+  focusMode: boolean
+  focusModeRestore: LayoutRestore | null
+  maximizeLayoutRestore: LayoutRestore | null
+  viewerStatus: ViewerStatus | null
+  viewerCommandSeq: number
+  viewerCommand: ViewerCommand | null
+  findBarOpen: boolean
+  findQuery: string
+  findMatchIndex: number
+  findMatchCount: number
+  findStepSeq: number
+  findStepForward: boolean
   openDocument: (doc: Omit<OpenDocument, 'id'>) => void
   openWebPage: (url: string) => boolean
   openWebSnapshot: (meta: WebSnapshotMeta) => void
@@ -99,9 +127,21 @@ interface WorkspaceState {
   detachDocumentFromChat: () => void
   notifyWebSnapshotsChanged: () => void
   setWebSession: (session: WebViewSession | null) => void
+  clearWebSession: (docId: string) => void
   updateWebSession: (docId: string, patch: Partial<Omit<WebViewSession, 'docId'>>) => void
   dispatchWebNav: (action: WebNavAction, url?: string) => void
+  clearWebNavAction: () => void
   sendToAI: (text: string, docPath: string, range?: TextSelectionContext['range']) => void
+  toggleFocusMode: () => void
+  exitFocusMode: () => void
+  enterMaximizeLayout: () => void
+  exitMaximizeLayout: () => void
+  setViewerStatus: (status: ViewerStatus | null) => void
+  dispatchViewerCommand: (kind: ViewerCommandKind) => void
+  closeFindBar: () => void
+  setFindQuery: (query: string) => void
+  setFindMatchStats: (index: number, count: number) => void
+  stepFind: (forward: boolean) => void
 }
 
 const RECENT_KEY = 'hanstudy-recent-files'
@@ -157,9 +197,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   chatAttachedDoc: null,
   chatDocContext: null,
   webSnapshotTick: 0,
-  webSession: null,
+  webSessions: {},
   webNavSeq: 0,
   webNavAction: null,
+  focusMode: false,
+  focusModeRestore: null,
+  maximizeLayoutRestore: null,
+  viewerStatus: null,
+  viewerCommandSeq: 0,
+  viewerCommand: null,
+  findBarOpen: false,
+  findQuery: '',
+  findMatchIndex: 0,
+  findMatchCount: 0,
+  findStepSeq: 0,
+  findStepForward: true,
 
   openDocument: (doc) => {
     const existing = get().documents.find((d) => d.path === doc.path)
@@ -211,13 +263,27 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set((state) => ({ webSnapshotTick: state.webSnapshotTick + 1 }))
   },
 
-  setWebSession: (session) => set({ webSession: session }),
+  setWebSession: (session) =>
+    set((state) => {
+      if (!session) return { webSessions: {} }
+      return {
+        webSessions: { ...state.webSessions, [session.docId]: session }
+      }
+    }),
+
+  clearWebSession: (docId) =>
+    set((state) => {
+      const webSessions = { ...state.webSessions }
+      delete webSessions[docId]
+      return { webSessions }
+    }),
 
   updateWebSession: (docId, patch) => {
     set((state) => {
-      if (!state.webSession || state.webSession.docId !== docId) {
-        return {
-          webSession: {
+      const existing = state.webSessions[docId]
+      const next: WebViewSession = existing
+        ? { ...existing, ...patch }
+        : {
             docId,
             currentUrl: patch.currentUrl ?? '',
             title: patch.title ?? '',
@@ -225,9 +291,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
             canGoBack: patch.canGoBack ?? false,
             canGoForward: patch.canGoForward ?? false
           }
-        }
-      }
-      return { webSession: { ...state.webSession, ...patch } }
+      return { webSessions: { ...state.webSessions, [docId]: next } }
     })
   },
 
@@ -238,30 +302,61 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }))
   },
 
+  clearWebNavAction: () => set({ webNavAction: null }),
+
   closeDocument: (id) => {
     set((state) => {
+      const closed = state.documents.find((d) => d.id === id)
       const documents = state.documents.filter((d) => d.id !== id)
       let activeDocumentId = state.activeDocumentId
       if (activeDocumentId === id) {
         activeDocumentId = documents.length > 0 ? documents[documents.length - 1].id : null
       }
-      const webSession = state.webSession?.docId === id ? null : state.webSession
-      return { documents, activeDocumentId, selection: null, webSession }
+      const webSessions = { ...state.webSessions }
+      delete webSessions[id]
+      const detachChat =
+        closed != null && state.chatAttachedDoc?.path === closed.path
+      return {
+        documents,
+        activeDocumentId,
+        selection: null,
+        webSessions,
+        ...(detachChat ? { chatAttachedDoc: null, chatDocContext: null } : {})
+      }
     })
   },
 
   closeOtherDocuments: (id) => {
     set((state) => {
+      const kept = state.documents.find((d) => d.id === id)
       const documents = state.documents.filter((d) => d.id === id)
+      const webSessions: Record<string, WebViewSession> = {}
+      if (state.webSessions[id]) {
+        webSessions[id] = state.webSessions[id]
+      }
+      const detachChat =
+        kept != null &&
+        state.chatAttachedDoc != null &&
+        state.chatAttachedDoc.path !== kept.path
       return {
         documents,
         activeDocumentId: documents.length > 0 ? id : null,
-        selection: null
+        selection: null,
+        webSessions,
+        ...(detachChat ? { chatAttachedDoc: null, chatDocContext: null } : {})
       }
     })
   },
 
-  closeAllDocuments: () => set({ documents: [], activeDocumentId: null, selection: null }),
+  closeAllDocuments: () =>
+    set({
+      documents: [],
+      activeDocumentId: null,
+      selection: null,
+      webSessions: {},
+      chatAttachedDoc: null,
+      chatDocContext: null
+    }),
 
   reorderDocuments: (fromId, toId) => {
     set((state) => {
@@ -275,7 +370,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     })
   },
 
-  setActiveDocument: (id) => set({ activeDocumentId: id, selection: null }),
+  setActiveDocument: (id) => set({ activeDocumentId: id, selection: null, focusAnnotationId: null }),
 
   setRootFolder: (path, files) => {
     set({ rootFolder: path, fileTree: files })
@@ -374,5 +469,99 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       selection: { docPath, text, range },
       aiDraft: `请解释以下内容：\n\n${text.slice(0, 500)}`
     })
-  }
+  },
+
+  toggleFocusMode: () => {
+    const state = get()
+    if (state.focusMode) {
+      get().exitFocusMode()
+      return
+    }
+    set({
+      focusMode: true,
+      focusModeRestore: { showSidebar: state.showSidebar, showAIPanel: state.showAIPanel },
+      showSidebar: false,
+      showAIPanel: false
+    })
+  },
+
+  exitFocusMode: () => {
+    const state = get()
+    if (!state.focusMode) return
+    const restore = state.focusModeRestore
+    set({
+      focusMode: false,
+      focusModeRestore: null,
+      showSidebar: restore?.showSidebar ?? state.showSidebar,
+      showAIPanel: restore?.showAIPanel ?? state.showAIPanel
+    })
+    if (get().maximizeLayoutRestore) {
+      get().enterMaximizeLayout()
+    }
+  },
+
+  enterMaximizeLayout: () => {
+    const state = get()
+    if (state.focusMode) return
+    if (!state.maximizeLayoutRestore) {
+      set({
+        maximizeLayoutRestore: { showSidebar: state.showSidebar, showAIPanel: state.showAIPanel }
+      })
+    }
+    set({ showSidebar: false, showAIPanel: false })
+  },
+
+  exitMaximizeLayout: () => {
+    const state = get()
+    const restore = state.maximizeLayoutRestore
+    if (!restore) return
+    set({
+      maximizeLayoutRestore: null,
+      showSidebar: restore.showSidebar,
+      showAIPanel: restore.showAIPanel
+    })
+  },
+
+  setViewerStatus: (status) => set({ viewerStatus: status }),
+
+  dispatchViewerCommand: (kind) => {
+    const seq = get().viewerCommandSeq + 1
+    const patch: Partial<WorkspaceState> = {
+      viewerCommand: { seq, kind },
+      viewerCommandSeq: seq
+    }
+    if (kind === 'find') {
+      patch.findBarOpen = true
+      patch.findQuery = ''
+      patch.findMatchIndex = 0
+      patch.findMatchCount = 0
+      patch.findStepSeq = 0
+    }
+    set(patch)
+  },
+
+  closeFindBar: () =>
+    set({
+      findBarOpen: false,
+      findQuery: '',
+      findMatchIndex: 0,
+      findMatchCount: 0
+    }),
+
+  setFindQuery: (query) =>
+    set({
+      findQuery: query,
+      findMatchIndex: 0,
+      findMatchCount: 0,
+      findStepSeq: get().findStepSeq + 1,
+      findStepForward: true
+    }),
+
+  setFindMatchStats: (index, count) => set({ findMatchIndex: index, findMatchCount: count }),
+
+  stepFind: (forward) =>
+    set((state) => ({
+      findStepForward: forward,
+      findStepSeq: state.findStepSeq + 1
+    }))
 }))

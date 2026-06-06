@@ -64,6 +64,14 @@ export interface AISettings {
 
 export type ChatMode = 'agent' | 'chat' | 'reading'
 
+export interface ChatToolStepRecord {
+  id: string
+  name: string
+  status: 'running' | 'done' | 'error'
+  output?: string
+  error?: string
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'system'
@@ -72,6 +80,8 @@ export interface ChatMessage {
   contextText?: string
   /** API 失败等错误信息，以助手气泡展示 */
   isError?: boolean
+  /** Agent 模式工具调用步骤（流式结束后保留） */
+  toolSteps?: ChatToolStepRecord[]
 }
 
 export interface TextSelectionContext {

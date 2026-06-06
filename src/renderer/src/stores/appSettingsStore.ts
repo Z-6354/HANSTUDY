@@ -1,7 +1,7 @@
 import { create } from 'zustand'
-import type { AppSettings } from '../../../shared/appSettings'
-import { DEFAULT_APP_SETTINGS } from '../../../shared/appSettings'
-import type { WebSearchEngine } from '../../../shared/webCrop'
+import type { AppSettings } from '@shared/appSettings'
+import { DEFAULT_APP_SETTINGS } from '@shared/appSettings'
+import type { WebSearchEngine } from '@shared/webCrop'
 
 interface AppSettingsState extends AppSettings {
   loaded: boolean
@@ -36,7 +36,7 @@ export function getSearchEngine(): WebSearchEngine {
   return loaded ? searchEngine : DEFAULT_APP_SETTINGS.searchEngine
 }
 
-/** 打开网页时是否自动收起侧栏/AI（未加载设置前用默认值） */
+/** 打开网页时是否自动收起侧�?AI（未加载设置前用默认值） */
 export function getWebBrowseLayoutPrefs(): Pick<
   AppSettings,
   'webBrowseHideSidebar' | 'webBrowseHideAIPanel'

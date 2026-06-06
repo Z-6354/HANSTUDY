@@ -6,12 +6,15 @@ export interface AppSettings {
   webBrowseHideSidebar: boolean
   /** 打开网页标签时自动收起 AI 面板 */
   webBrowseHideAIPanel: boolean
+  /** 自动批准 MCP 等需 HITL 的工具调用 */
+  hitlAutoApprove: boolean
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   searchEngine: 'bing',
   webBrowseHideSidebar: true,
-  webBrowseHideAIPanel: true
+  webBrowseHideAIPanel: true,
+  hitlAutoApprove: false
 }
 
 export const WEB_SEARCH_ENGINE_OPTIONS: { id: WebSearchEngine; label: string }[] = [

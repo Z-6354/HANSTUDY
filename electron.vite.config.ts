@@ -20,7 +20,10 @@ export default defineConfig({
   renderer: {
     resolve: {
       alias: {
-        '@renderer': resolve('src/renderer/src')
+        '@renderer': resolve('src/renderer/src'),
+        '@ui': resolve('src/renderer/src/ui'),
+        '@features': resolve('src/renderer/src/features'),
+        '@shared': resolve('src/shared')
       }
     },
     plugins: [react()]

@@ -5,7 +5,7 @@ import type {
   WebCredentialItem,
   WebHistoryEntry,
   WebPhoneEntry
-} from '../../../shared/webLibrary'
+} from '@shared/webLibrary'
 
 interface WebLibraryState {
   loaded: boolean
@@ -26,6 +26,9 @@ interface WebLibraryState {
   removePhone: (id: string) => Promise<void>
 }
 
+let ipcListenersRegistered = false
+let ipcUnsubscribers: Array<() => void> = []
+
 export const useWebLibraryStore = create<WebLibraryState>((set) => ({
   loaded: false,
   history: [],
@@ -41,7 +44,15 @@ export const useWebLibraryStore = create<WebLibraryState>((set) => ({
       window.api.webLibrary.listPhones()
     ])
     set({ loaded: true, history, bookmarks, credentials, phones })
-    window.api.webLibrary.onPhonesChanged((nextPhones) => set({ phones: nextPhones }))
+    if (!ipcListenersRegistered) {
+      ipcListenersRegistered = true
+      ipcUnsubscribers = [
+        window.api.webLibrary.onPhonesChanged((nextPhones) => set({ phones: nextPhones })),
+        window.api.webLibrary.onCredentialsChanged((nextCredentials) =>
+          set({ credentials: nextCredentials })
+        )
+      ]
+    }
   },
 
   addHistory: async (url, title) => {

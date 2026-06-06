@@ -11,7 +11,9 @@ import type {
   WebPhoneEntry
 } from '../shared/webLibrary'
 import type { WebGuestBounds, WebGuestEvent } from '../shared/webGuest'
+import type { McpServerState } from '../shared/mcp/types'
 import type { SkillListItem } from '../shared/skills'
+import { IPC } from '../shared/ipc/channels'
 
 export interface OpenedFileInfo {
   path: string
@@ -37,7 +39,12 @@ const api = {
     minimize: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
     maximize: (): Promise<void> => ipcRenderer.invoke('window:maximize'),
     close: (): Promise<void> => ipcRenderer.invoke('window:close'),
-    isMaximized: (): Promise<boolean> => ipcRenderer.invoke('window:isMaximized')
+    isMaximized: (): Promise<boolean> => ipcRenderer.invoke('window:isMaximized'),
+    onMaximizedChanged: (cb: (maximized: boolean) => void): (() => void) => {
+      const handler = (_e: IpcRendererEvent, maximized: boolean): void => cb(maximized)
+      ipcRenderer.on('window:maximized-changed', handler)
+      return () => ipcRenderer.removeListener('window:maximized-changed', handler)
+    }
   },
   dialog: {
     openFile: (): Promise<OpenedFileInfo | null> => ipcRenderer.invoke('dialog:openFile'),
@@ -51,11 +58,19 @@ const api = {
     saveMarkdown: (content: string, defaultName: string): Promise<boolean> =>
       ipcRenderer.invoke('dialog:saveMarkdown', content, defaultName)
   },
+  localLibrary: {
+    list: (): Promise<FileEntry[]> => ipcRenderer.invoke('localLibrary:list'),
+    getPath: (): Promise<string> => ipcRenderer.invoke('localLibrary:getPath'),
+    import: (): Promise<{
+      imported: Array<{ path: string; name: string; error?: string }>
+      canceled: boolean
+    }> => ipcRenderer.invoke('localLibrary:import')
+  },
   fs: {
     listDirectory: (dirPath: string): Promise<FileEntry[]> =>
       ipcRenderer.invoke('fs:listDirectory', dirPath),
     readText: (filePath: string): Promise<string> => ipcRenderer.invoke('fs:readText', filePath),
-    readBinary: (filePath: string): Promise<number[]> =>
+    readBinary: (filePath: string): Promise<Uint8Array> =>
       ipcRenderer.invoke('fs:readBinary', filePath),
     getFileInfo: (filePath: string): Promise<OpenedFileInfo & { supported: boolean }> =>
       ipcRenderer.invoke('fs:getFileInfo', filePath),
@@ -133,6 +148,14 @@ const api = {
       ipcRenderer.invoke('webLibrary:removeCredential', id),
     getCredentialPassword: (id: string): Promise<string> =>
       ipcRenderer.invoke('webLibrary:getCredentialPassword', id),
+    listCredentialsForOrigin: (origin: string): Promise<WebCredentialItem[]> =>
+      ipcRenderer.invoke('webLibrary:listCredentialsForOrigin', origin),
+    onCredentialsChanged: (callback: (credentials: WebCredentialItem[]) => void): (() => void) => {
+      const handler = (_: IpcRendererEvent, credentials: WebCredentialItem[]): void =>
+        callback(credentials)
+      ipcRenderer.on('webLibrary:credentialsChanged', handler)
+      return () => ipcRenderer.removeListener('webLibrary:credentialsChanged', handler)
+    },
     listPhones: (): Promise<WebPhoneEntry[]> => ipcRenderer.invoke('webLibrary:listPhones'),
     addPhone: (phone: string, origin?: string): Promise<WebPhoneEntry[]> =>
       ipcRenderer.invoke('webLibrary:addPhone', phone, origin),
@@ -145,11 +168,19 @@ const api = {
     }
   },
   webGuest: {
+    prepareDoc: (docId: string, url?: string): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('webGuest:prepareDoc', docId, url),
     attach: (
       docId: string,
-      bounds: WebGuestBounds
-    ): Promise<{ ok: boolean; url: string; canGoBack: boolean; canGoForward: boolean }> =>
-      ipcRenderer.invoke('webGuest:attach', docId, bounds),
+      bounds: WebGuestBounds,
+      url?: string
+    ): Promise<{
+      ok: boolean
+      url: string
+      started: boolean
+      canGoBack: boolean
+      canGoForward: boolean
+    }> => ipcRenderer.invoke('webGuest:attach', docId, bounds, url),
     detach: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('webGuest:detach'),
     destroy: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('webGuest:destroy'),
     destroyDoc: (docId: string): Promise<{ ok: boolean }> =>
@@ -161,13 +192,21 @@ const api = {
     back: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('webGuest:back'),
     forward: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('webGuest:forward'),
     reload: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('webGuest:reload'),
-    getState: (): Promise<{ url: string; canGoBack: boolean; canGoForward: boolean }> =>
-      ipcRenderer.invoke('webGuest:getState'),
+    selectAll: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('webGuest:selectAll'),
+    findInPage: (text: string, forward?: boolean): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('webGuest:findInPage', text, forward ?? true),
+    stopFindInPage: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('webGuest:stopFindInPage'),
+    getState: (): Promise<{
+      url: string
+      attached: boolean
+      canGoBack: boolean
+      canGoForward: boolean
+    }> => ipcRenderer.invoke('webGuest:getState'),
     openDevTools: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('webGuest:openDevTools'),
     onEvent: (callback: (event: WebGuestEvent) => void): (() => void) => {
       const handler = (_: IpcRendererEvent, payload: WebGuestEvent): void => callback(payload)
-      ipcRenderer.on('webGuest:event', handler)
-      return () => ipcRenderer.removeListener('webGuest:event', handler)
+      ipcRenderer.on(IPC.webGuest.event, handler)
+      return () => ipcRenderer.removeListener(IPC.webGuest.event, handler)
     }
   },
   backend: {
@@ -177,6 +216,40 @@ const api = {
       storageMode: 'java' | 'node'
       fallbackReason?: string
     }> => ipcRenderer.invoke('backend:getStatus')
+  },
+  system: {
+    getMemory: (): Promise<{
+      main: {
+        rssMb: number
+        heapUsedMb: number
+        heapTotalMb: number
+        externalMb: number
+        arrayBuffersMb: number
+      }
+      renderer: {
+        rssMb: number
+        heapUsedMb: number
+        heapTotalMb: number
+        externalMb: number
+        arrayBuffersMb: number
+      } | null
+      openWebGuestCount: number
+      timestamp: string
+    }> => ipcRenderer.invoke('system:getMemory')
+  },
+  readingProgress: {
+    get: (docPath: string): Promise<import('../shared/readingProgress').ReadingProgress | null> =>
+      ipcRenderer.invoke('readingProgress:get', docPath),
+    save: (
+      progress: Partial<import('../shared/readingProgress').ReadingProgress> & { docPath: string }
+    ): Promise<import('../shared/readingProgress').ReadingProgress> =>
+      ipcRenderer.invoke('readingProgress:save', progress)
+  },
+  workspaceSession: {
+    get: (): Promise<import('../shared/readingProgress').WorkspaceSession | null> =>
+      ipcRenderer.invoke('workspaceSession:get'),
+    save: (session: import('../shared/readingProgress').WorkspaceSession): Promise<void> =>
+      ipcRenderer.invoke('workspaceSession:save', session)
   },
   skills: {
     list: (): Promise<SkillListItem[]> => ipcRenderer.invoke('skills:list'),
@@ -238,9 +311,70 @@ const api = {
     },
     onStreamAborted: (cb: (requestId: string) => void): (() => void) => {
       const handler = (_e: IpcRendererEvent, requestId: string): void => cb(requestId)
-      ipcRenderer.on('ai:stream-aborted', handler)
-      return () => ipcRenderer.removeListener('ai:stream-aborted', handler)
+      ipcRenderer.on(IPC.ai.streamAborted, handler)
+      return () => ipcRenderer.removeListener(IPC.ai.streamAborted, handler)
+    },
+    onToolStart: (
+      cb: (requestId: string, toolCallId: string, name: string, args: Record<string, unknown>) => void
+    ): (() => void) => {
+      const handler = (
+        _e: IpcRendererEvent,
+        requestId: string,
+        toolCallId: string,
+        name: string,
+        args: Record<string, unknown>
+      ): void => cb(requestId, toolCallId, name, args)
+      ipcRenderer.on(IPC.ai.toolStart, handler)
+      return () => ipcRenderer.removeListener(IPC.ai.toolStart, handler)
+    },
+    onToolDone: (
+      cb: (
+        requestId: string,
+        toolCallId: string,
+        name: string,
+        output: string,
+        error?: string
+      ) => void
+    ): (() => void) => {
+      const handler = (
+        _e: IpcRendererEvent,
+        requestId: string,
+        toolCallId: string,
+        name: string,
+        output: string,
+        error?: string
+      ): void => cb(requestId, toolCallId, name, output, error)
+      ipcRenderer.on(IPC.ai.toolDone, handler)
+      return () => ipcRenderer.removeListener(IPC.ai.toolDone, handler)
+    },
+    onHitlRequest: (
+      cb: (
+        chatRequestId: string,
+        hitlRequestId: string,
+        toolName: string,
+        args: Record<string, unknown>
+      ) => void
+    ): (() => void) => {
+      const handler = (
+        _e: IpcRendererEvent,
+        chatRequestId: string,
+        hitlRequestId: string,
+        toolName: string,
+        args: Record<string, unknown>
+      ): void => cb(chatRequestId, hitlRequestId, toolName, args)
+      ipcRenderer.on(IPC.ai.hitlRequest, handler)
+      return () => ipcRenderer.removeListener(IPC.ai.hitlRequest, handler)
+    },
+    respondHitl: (hitlRequestId: string, approved: boolean): void => {
+      ipcRenderer.send(IPC.ai.hitlResponse, hitlRequestId, approved)
     }
+  },
+  mcp: {
+    list: (): Promise<McpServerState[]> => ipcRenderer.invoke(IPC.mcp.list),
+    restart: (serverId: string): Promise<McpServerState[]> =>
+      ipcRenderer.invoke(IPC.mcp.restart, serverId),
+    toggle: (serverId: string, enabled: boolean): Promise<McpServerState[]> =>
+      ipcRenderer.invoke(IPC.mcp.toggle, serverId, enabled)
   }
 }
 

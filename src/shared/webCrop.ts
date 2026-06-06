@@ -11,14 +11,23 @@ export const WEB_CROP_STORAGE_KEY = 'hanstudy-web-crop'
 export function clampCrop(crop: WebHorizontalCrop): WebHorizontalCrop {
   let left = Math.max(0, Math.min(1, crop.left))
   let right = Math.max(0, Math.min(1, crop.right))
+  if (left > right) {
+    const tmp = left
+    left = right
+    right = tmp
+  }
+  if (left >= right) {
+    return { left: 0, right: 1 }
+  }
   if (right - left < WEB_CROP_MIN_SPAN) {
     if (right < 1) {
       right = Math.min(1, left + WEB_CROP_MIN_SPAN)
-    } else {
+    }
+    if (right - left < WEB_CROP_MIN_SPAN) {
       left = Math.max(0, right - WEB_CROP_MIN_SPAN)
     }
   }
-  if (left >= right) {
+  if (left >= right || right - left < WEB_CROP_MIN_SPAN) {
     return { left: 0, right: 1 }
   }
   return { left, right }

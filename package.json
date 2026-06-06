@@ -12,6 +12,9 @@
     "prepare:jre": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/fetch-jre.ps1",
     "verify:packaging": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-packaging.ps1",
     "typecheck": "tsc -p tsconfig.web.json --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:all": "npm run typecheck && vitest run",
     "test:webview": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-webview.ps1",
     "build": "npm run build:java && electron-vite build",
     "preview": "electron-vite preview",
@@ -40,8 +43,10 @@
     "electron": "^33.3.1",
     "electron-builder": "^25.1.8",
     "electron-vite": "^2.3.0",
+    "happy-dom": "^20.10.2",
     "typescript": "^5.7.3",
-    "vite": "^5.4.14"
+    "vite": "^5.4.14",
+    "vitest": "^4.1.8"
   },
   "build": {
     "appId": "com.hanstudy.reader",
@@ -52,6 +57,9 @@
     "files": [
       "out/**/*"
     ],
+    "asarUnpack": [
+      "node_modules/pdfjs-dist/**"
+    ],
     "extraResources": [
       {
         "from": "java-backend/target/hanstudy-backend.jar",
@@ -60,7 +68,9 @@
       {
         "from": "resources/skills",
         "to": "skills",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {

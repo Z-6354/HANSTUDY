@@ -36,6 +36,7 @@ export interface WebViewerDebugState {
   guestWidth: number
   guestHeight: number
   webviewReady: boolean
+  guestAttached: boolean
   loading: boolean
   guestUrl: string
   targetUrl: string

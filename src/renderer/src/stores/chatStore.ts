@@ -7,12 +7,28 @@ const SESSIONS_KEY = 'hanstudy-chat-sessions'
 
 export const GLOBAL_CHAT_SESSION = '__global__'
 
+export interface ChatToolStep {
+  id: string
+  name: string
+  status: 'running' | 'done' | 'error'
+  output?: string
+  error?: string
+}
+
+export interface SessionStreamState {
+  requestId: string
+  assistantId: string
+  toolSteps: ChatToolStep[]
+}
+
 export interface ChatSession {
   id: string
   title: string
   mode: ChatMode
   createdAt: string
   updatedAt: string
+  docPath?: string | null
+  excludedSkills?: string[]
 }
 
 function genSessionId(): string {
@@ -41,7 +57,9 @@ function loadSessions(): ChatSession[] {
       title: s.title ?? '新对话',
       mode: s.mode ?? 'chat',
       createdAt: s.createdAt ?? new Date().toISOString(),
-      updatedAt: s.updatedAt ?? new Date().toISOString()
+      updatedAt: s.updatedAt ?? new Date().toISOString(),
+      docPath: s.docPath ?? null,
+      excludedSkills: s.excludedSkills ?? []
     }))
   } catch {
     return []
@@ -73,7 +91,9 @@ function bootstrapSessions(messagesByDoc: Record<string, ChatMessage[]>): {
           title: firstUser ? firstUser.content.slice(0, 32) : '历史对话',
           mode: 'chat',
           createdAt: legacy[0]?.createdAt ?? new Date().toISOString(),
-          updatedAt: legacy[legacy.length - 1]?.createdAt ?? new Date().toISOString()
+          updatedAt: legacy[legacy.length - 1]?.createdAt ?? new Date().toISOString(),
+          docPath: null,
+          excludedSkills: []
         }
       ]
     } else {
@@ -84,7 +104,9 @@ function bootstrapSessions(messagesByDoc: Record<string, ChatMessage[]>): {
           title: '新对话',
           mode: 'chat',
           createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
+          updatedAt: new Date().toISOString(),
+          docPath: null,
+          excludedSkills: []
         }
       ]
     }
@@ -101,7 +123,8 @@ interface ChatState {
   sessions: ChatSession[]
   activeSessionId: string
   messagesByDoc: Record<string, ChatMessage[]>
-  streamingId: string | null
+  activeStreams: Record<string, SessionStreamState>
+  requestSessionMap: Record<string, string>
   showHistory: boolean
   loadForDoc: (sessionId: string) => ChatMessage[]
   addMessage: (sessionId: string, message: ChatMessage) => void
@@ -112,20 +135,34 @@ interface ChatState {
     options?: { isError?: boolean }
   ) => void
   clearSession: (sessionId: string) => void
-  createSession: () => string
+  createSession: (docPath?: string | null, title?: string) => string
   switchSession: (sessionId: string) => void
   deleteSession: (sessionId: string) => void
   setShowHistory: (show: boolean) => void
   toggleHistory: () => void
   setSessionMode: (sessionId: string, mode: ChatMode) => void
-  setStreamingId: (id: string | null) => void
+  getOrCreateSessionForDoc: (docPath: string, docName: string) => string
+  switchSessionForDoc: (docPath: string, docName: string) => void
+  getExcludedSkills: (sessionId: string) => string[]
+  toggleExcludedSkill: (sessionId: string, name: string) => void
+  clearExcludedSkills: (sessionId: string) => void
+  startStream: (sessionId: string, requestId: string, assistantId: string) => void
+  finishStream: (requestId: string) => void
+  getSessionForRequest: (requestId: string) => string | undefined
+  getStream: (sessionId: string) => SessionStreamState | undefined
+  updateStreamToolSteps: (
+    sessionId: string,
+    updater: (prev: ChatToolStep[]) => ChatToolStep[]
+  ) => void
+  isSessionStreaming: (sessionId: string) => boolean
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
   sessions: boot.sessions,
   activeSessionId: boot.activeSessionId,
   messagesByDoc: boot.messagesByDoc,
-  streamingId: null,
+  activeStreams: {},
+  requestSessionMap: {},
   showHistory: false,
 
   loadForDoc: (sessionId) => get().messagesByDoc[sessionId] ?? [],
@@ -175,14 +212,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
   },
 
-  createSession: () => {
+  createSession: (docPath = null, title = '新对话') => {
     const id = genSessionId()
     const session: ChatSession = {
       id,
-      title: '新对话',
+      title,
       mode: 'chat',
       createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      docPath,
+      excludedSkills: []
     }
     set((state) => {
       const sessions = [session, ...state.sessions]
@@ -196,13 +235,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ activeSessionId: sessionId, showHistory: false })
   },
 
+  getOrCreateSessionForDoc: (docPath, docName) => {
+    const state = get()
+    const existing = state.sessions.find((s) => s.docPath === docPath)
+    if (existing) return existing.id
+    return get().createSession(docPath, docName)
+  },
+
+  switchSessionForDoc: (docPath, docName) => {
+    const id = get().getOrCreateSessionForDoc(docPath, docName)
+    get().switchSession(id)
+  },
+
   deleteSession: (sessionId) => {
     set((state) => {
       if (state.sessions.length <= 1) {
         get().clearSession(sessionId)
         const sessions = state.sessions.map((s) =>
           s.id === sessionId
-            ? { ...s, title: '新对话', updatedAt: new Date().toISOString() }
+            ? {
+                ...s,
+                title: '新对话',
+                docPath: null,
+                excludedSkills: [],
+                updatedAt: new Date().toISOString()
+              }
             : s
         )
         saveSessions(sessions)
@@ -215,11 +272,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       saveAll(messagesByDoc)
       saveSessions(sessions)
 
+      const activeStreams = { ...state.activeStreams }
+      delete activeStreams[sessionId]
+
       let activeSessionId = state.activeSessionId
       if (activeSessionId === sessionId) {
         activeSessionId = sessions[0]?.id ?? activeSessionId
       }
-      return { sessions, messagesByDoc, activeSessionId }
+      return { sessions, messagesByDoc, activeSessionId, activeStreams }
     })
   },
 
@@ -237,5 +297,86 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
   },
 
-  setStreamingId: (id) => set({ streamingId: id })
+  getExcludedSkills: (sessionId) => {
+    return get().sessions.find((s) => s.id === sessionId)?.excludedSkills ?? []
+  },
+
+  toggleExcludedSkill: (sessionId, name) => {
+    set((state) => {
+      const sessions = state.sessions.map((s) => {
+        if (s.id !== sessionId) return s
+        const list = s.excludedSkills ?? []
+        const excludedSkills = list.includes(name)
+          ? list.filter((item) => item !== name)
+          : [...list, name]
+        return { ...s, excludedSkills }
+      })
+      saveSessions(sessions)
+      return { sessions }
+    })
+  },
+
+  clearExcludedSkills: (sessionId) => {
+    set((state) => {
+      const sessions = state.sessions.map((s) =>
+        s.id === sessionId ? { ...s, excludedSkills: [] } : s
+      )
+      saveSessions(sessions)
+      return { sessions }
+    })
+  },
+
+  startStream: (sessionId, requestId, assistantId) => {
+    set((state) => ({
+      activeStreams: {
+        ...state.activeStreams,
+        [sessionId]: { requestId, assistantId, toolSteps: [] }
+      },
+      requestSessionMap: { ...state.requestSessionMap, [requestId]: sessionId }
+    }))
+  },
+
+  finishStream: (requestId) => {
+    set((state) => {
+      const sessionId = state.requestSessionMap[requestId]
+      if (!sessionId) return state
+      const stream = state.activeStreams[sessionId]
+      let messagesByDoc = state.messagesByDoc
+      if (stream && stream.toolSteps.length > 0) {
+        const list = state.messagesByDoc[sessionId] ?? []
+        messagesByDoc = {
+          ...state.messagesByDoc,
+          [sessionId]: list.map((m) =>
+            m.id === stream.assistantId ? { ...m, toolSteps: [...stream.toolSteps] } : m
+          )
+        }
+        saveAll(messagesByDoc)
+      }
+      const activeStreams = { ...state.activeStreams }
+      delete activeStreams[sessionId]
+      const requestSessionMap = { ...state.requestSessionMap }
+      delete requestSessionMap[requestId]
+      return { activeStreams, requestSessionMap, messagesByDoc }
+    })
+  },
+
+  getSessionForRequest: (requestId) => get().requestSessionMap[requestId],
+
+  getStream: (sessionId) => get().activeStreams[sessionId],
+
+  updateStreamToolSteps: (sessionId, updater) => {
+    set((state) => {
+      const stream = state.activeStreams[sessionId]
+      if (!stream) return state
+      return {
+        activeStreams: {
+          ...state.activeStreams,
+          [sessionId]: { ...stream, toolSteps: updater(stream.toolSteps) }
+        }
+      }
+    })
+  },
+
+  isSessionStreaming: (sessionId) => Boolean(get().activeStreams[sessionId])
 }))
+
