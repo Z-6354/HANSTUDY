@@ -5,6 +5,7 @@ import type { Annotation } from '../types/global.d'
 export function useAnnotations(docPath: string): {
   annotations: Annotation[]
   loading: boolean
+  error: string | null
   refresh: () => Promise<void>
   create: (input: Omit<Annotation, 'id' | 'createdAt' | 'docPath'>) => Promise<Annotation>
   update: (id: string, patch: Partial<Annotation>) => Promise<void>
@@ -12,13 +13,24 @@ export function useAnnotations(docPath: string): {
 } {
   const [annotations, setAnnotations] = useState<Annotation[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const annotationTick = useWorkspaceStore((s) => s.annotationTick)
 
   const refresh = useCallback(async () => {
+    if (!docPath || docPath === '__none__') {
+      setAnnotations([])
+      setError(null)
+      setLoading(false)
+      return
+    }
     setLoading(true)
+    setError(null)
     try {
       const items = await window.api.annotations.list(docPath)
       setAnnotations(items)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '加载标注失败')
+      setAnnotations([])
     } finally {
       setLoading(false)
     }
@@ -46,9 +58,14 @@ export function useAnnotations(docPath: string): {
   }, [])
 
   const remove = useCallback(async (id: string) => {
-    await window.api.annotations.delete(id)
-    setAnnotations((prev) => prev.filter((a) => a.id !== id))
+    const ok = await window.api.annotations.delete(id)
+    if (ok) {
+      setAnnotations((prev) => prev.filter((a) => a.id !== id))
+      useWorkspaceStore.getState().notifyAnnotationsChanged()
+    } else {
+      throw new Error('删除标注失败')
+    }
   }, [])
 
-  return { annotations, loading, refresh, create, update, remove }
+  return { annotations, loading, error, refresh, create, update, remove }
 }

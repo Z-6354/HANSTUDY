@@ -6,3 +6,13 @@ dist
 .DS_Store
 Thumbs.db
 docs
+*.tsbuildinfo
+hancli/
+.vscode/
+java-backend/target
+java-backend/.gradle
+.tools
+java-backend/.tools
+java-backend/.idea
+resources/jre-win/*
+!resources/jre-win/README.md

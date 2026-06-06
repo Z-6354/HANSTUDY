@@ -5,6 +5,7 @@ import { DocxViewer } from '../viewers/DocxViewer'
 import { MdViewer } from '../viewers/MdViewer'
 import { PdfViewer } from '../viewers/PdfViewer'
 import { TxtViewer } from '../viewers/TxtViewer'
+import { WebViewer } from '../viewers/WebViewer'
 
 interface DocumentViewerPaneProps {
   doc: OpenDocument
@@ -12,13 +13,29 @@ interface DocumentViewerPaneProps {
 }
 
 export function DocumentViewerPane({ doc, isActive }: DocumentViewerPaneProps): JSX.Element {
+  if (doc.type === 'settings') {
+    return (
+      <div className={`viewer-pane ${isActive ? 'active' : ''}`} aria-hidden={!isActive}>
+        <SettingsPage />
+      </div>
+    )
+  }
+
+  if (doc.type === 'web') {
+    return (
+      <div className={`viewer-pane web-pane ${isActive ? 'active' : ''}`} aria-hidden={!isActive}>
+        <WebViewer url={doc.path} docId={doc.id} isActive={isActive} />
+      </div>
+    )
+  }
+
   const viewer =
-    doc.type === 'md' ? (
+    doc.type === 'web-snapshot' || doc.type === 'pdf' ? (
+      <PdfViewer filePath={doc.path} />
+    ) : doc.type === 'md' ? (
       <MdViewer filePath={doc.path} />
     ) : doc.type === 'txt' ? (
       <TxtViewer filePath={doc.path} />
-    ) : doc.type === 'pdf' ? (
-      <PdfViewer filePath={doc.path} />
     ) : doc.type === 'docx' ? (
       <DocxViewer filePath={doc.path} />
     ) : (
@@ -27,13 +44,9 @@ export function DocumentViewerPane({ doc, isActive }: DocumentViewerPaneProps): 
 
   return (
     <div className={`viewer-pane ${isActive ? 'active' : ''}`} aria-hidden={!isActive}>
-      {doc.type === 'settings' ? (
-        <SettingsPage />
-      ) : (
-        <AnnotatedViewerShell docPath={doc.path} isActive={isActive}>
-          {viewer}
-        </AnnotatedViewerShell>
-      )}
+      <AnnotatedViewerShell docPath={doc.path} isActive={isActive}>
+        {viewer}
+      </AnnotatedViewerShell>
     </div>
   )
 }

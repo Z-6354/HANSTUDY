@@ -6,11 +6,17 @@
   "author": "HAN",
   "license": "MIT",
   "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "dev": "npm run build:java && electron-vite dev",
+    "dev:java": "cd java-backend && mvnw.cmd -q exec:java",
+    "build:java": "cd java-backend && mvnw.cmd -q package -DskipTests",
+    "prepare:jre": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/fetch-jre.ps1",
+    "verify:packaging": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-packaging.ps1",
+    "typecheck": "tsc -p tsconfig.web.json --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "test:webview": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-webview.ps1",
+    "build": "npm run build:java && electron-vite build",
     "preview": "electron-vite preview",
-    "dist": "npm run build && electron-builder",
-    "dist:win": "npm run build && electron-builder --win"
+    "dist": "npm run prepare:jre && npm run verify:packaging && npm run build && electron-builder",
+    "dist:win": "npm run prepare:jre && npm run verify:packaging && npm run build && electron-builder --win"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
@@ -46,14 +52,30 @@
     "files": [
       "out/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "java-backend/target/hanstudy-backend.jar",
+        "to": "java/hanstudy-backend.jar"
+      },
+      {
+        "from": "resources/skills",
+        "to": "skills",
+        "filter": ["**/*"]
+      }
+    ],
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "HAN Study Reader"
     }
   }
 }

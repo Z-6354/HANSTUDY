@@ -5,7 +5,8 @@ import { useAnnotationSurface } from '../annotations/AnnotationSurfaceContext'
 import {
   applyDomAnnotation,
   applyStoredDomAnnotations,
-  blockViewerContextMenu
+  blockViewerContextMenu,
+  scrollToAnnotationText
 } from '../annotations/textUtils'
 import { NoteInputModal, SelectionToolbar } from '../annotations/SelectionToolbar'
 import { useAnnotations } from '../annotations/useAnnotations'
@@ -37,7 +38,8 @@ export function DocxViewer({ filePath }: DocxViewerProps): JSX.Element {
   useEffect(() => {
     setScrollSurface(surfaceRef.current)
   }, [html, loading])
-  const { sendToAI, setSelection, annotationTool } = useWorkspaceStore()
+  const { sendToAI, setSelection, annotationTool, focusAnnotationId, setFocusAnnotationId } =
+    useWorkspaceStore()
   const domSelection = useDomTextSelection(filePath, contentRef)
 
   useEffect(() => {
@@ -116,6 +118,16 @@ export function DocxViewer({ filePath }: DocxViewerProps): JSX.Element {
     }
     setToolbarRect(domSelection.rect)
   }, [domSelection, setSelection, annotationTool, saveAnnotation])
+
+  useEffect(() => {
+    if (!focusAnnotationId || !contentRef.current) return
+    const ann = annotations.find((a) => a.id === focusAnnotationId)
+    if (!ann) return
+    if (ann.selectedText) {
+      scrollToAnnotationText(contentRef.current, ann.selectedText)
+    }
+    setFocusAnnotationId(null)
+  }, [focusAnnotationId, annotations, setFocusAnnotationId])
 
   if (loading) return <div className="loading-state">加载 Word 文档...</div>
   if (error) return <div className="error-state">{error}</div>

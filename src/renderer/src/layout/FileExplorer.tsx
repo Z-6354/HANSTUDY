@@ -7,6 +7,7 @@ import { useWorkspaceStore } from '../stores/workspaceStore'
 import { SETTINGS_DOC_PATH } from '../stores/workspaceStore'
 import { FileTypeIcon } from '../utils/fileIcons'
 import { ConfirmModal, PromptModal } from './PromptModal'
+import { WebSnapshotsSection } from './WebSnapshotsSection'
 
 interface ContextMenuState {
   x: number
@@ -341,6 +342,8 @@ export function FileExplorer(): JSX.Element {
           />
         ))}
       </div>
+
+      <WebSnapshotsSection />
 
       {recentFiles.length > 0 && (
         <div className="recent-section">

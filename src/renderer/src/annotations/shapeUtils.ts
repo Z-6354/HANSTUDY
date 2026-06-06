@@ -53,7 +53,7 @@ export function shapeToPixels(
   const strokeWidth = shape.strokeWidth ?? 2
   if (shape.points?.length) {
     return {
-      points: shape.points.map((p) => ({ x: p.x * width, y: p.y * height })),
+      points: shape.points.map((p: ShapePoint) => ({ x: p.x * width, y: p.y * height })),
       strokeWidth
     }
   }

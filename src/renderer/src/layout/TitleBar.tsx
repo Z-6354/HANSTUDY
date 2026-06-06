@@ -4,6 +4,7 @@ import { IconButton } from '../components/IconButton'
 import { useWorkspaceStore } from '../stores/workspaceStore'
 import type { LayoutPanelId } from '../stores/workspaceStore'
 import { AppIcon } from './AppIcon'
+import { PromptModal } from './PromptModal'
 
 interface MenuItem {
   label: string
@@ -29,6 +30,8 @@ export function TitleBar(): JSX.Element {
   const [activeMenu, setActiveMenu] = useState<string | null>(null)
   const [hoverSubmenu, setHoverSubmenu] = useState<string | null>(null)
   const [isMaximized, setIsMaximized] = useState(false)
+  const [webPromptOpen, setWebPromptOpen] = useState(false)
+  const [webPromptError, setWebPromptError] = useState('')
   const menuRef = useRef<HTMLDivElement>(null)
   const {
     toggleAIPanel,
@@ -37,7 +40,8 @@ export function TitleBar(): JSX.Element {
     showSidebar,
     showTabBar,
     showAnnotationToolbar,
-    toggleLayoutPanel
+    toggleLayoutPanel,
+    setSidebarTab
   } = useWorkspaceStore()
 
   const openFile = async (): Promise<void> => {
@@ -54,6 +58,22 @@ export function TitleBar(): JSX.Element {
       useWorkspaceStore.getState().setRootFolder(result.path, result.files)
     }
     setActiveMenu(null)
+  }
+
+  const openWebPage = (): void => {
+    setWebPromptError('')
+    setWebPromptOpen(true)
+    setActiveMenu(null)
+  }
+
+  const submitWebUrl = (value: string): void => {
+    const ok = useWorkspaceStore.getState().openWebPage(value)
+    if (!ok) {
+      setWebPromptError('请输入网址或搜索关键词')
+      return
+    }
+    setWebPromptOpen(false)
+    setWebPromptError('')
   }
 
   const isPanelVisible = (id: LayoutPanelId): boolean => {
@@ -84,6 +104,7 @@ export function TitleBar(): JSX.Element {
       items: [
         { label: '打开文件...', shortcut: 'Ctrl+O', action: openFile },
         { label: '打开文件夹...', shortcut: 'Ctrl+K Ctrl+O', action: openFolder },
+        { label: '打开网页...', shortcut: 'Ctrl+Shift+U', action: openWebPage },
         { label: '退出', shortcut: 'Alt+F4', action: () => window.api.window.close() }
       ]
     },
@@ -133,6 +154,15 @@ export function TitleBar(): JSX.Element {
         e.preventDefault()
         toggleAIPanel()
       }
+      if (e.ctrlKey && e.shiftKey && e.key === 'N') {
+        e.preventDefault()
+        if (!showSidebar) toggleLayoutPanel('sidebar')
+        setSidebarTab('notes')
+      }
+      if (e.ctrlKey && e.shiftKey && e.key === 'U') {
+        e.preventDefault()
+        openWebPage()
+      }
       if (e.ctrlKey && e.key === ',') {
         e.preventDefault()
         openSettings('system')
@@ -140,7 +170,7 @@ export function TitleBar(): JSX.Element {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [toggleAIPanel, openSettings, toggleLayoutPanel])
+  }, [toggleAIPanel, openSettings, toggleLayoutPanel, setSidebarTab, showSidebar])
 
   const renderMenuItem = (item: MenuItem, parentKey: string): JSX.Element => {
     const itemKey = `${parentKey}-${item.label}`
@@ -262,6 +292,20 @@ export function TitleBar(): JSX.Element {
           </button>
         </div>
       </div>
+
+      {webPromptOpen && (
+        <PromptModal
+          title="打开网页"
+          label="网址"
+          placeholder="https://example.com"
+          error={webPromptError || undefined}
+          onSubmit={submitWebUrl}
+          onCancel={() => {
+            setWebPromptOpen(false)
+            setWebPromptError('')
+          }}
+        />
+      )}
     </div>
   )
 }

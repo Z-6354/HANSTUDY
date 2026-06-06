@@ -1,8 +1,11 @@
 import { create } from 'zustand'
+import { resolveWebInput, webDisplayName } from '../../../shared/webCrop'
+import { getSearchEngine, getWebBrowseLayoutPrefs } from './appSettingsStore'
+import { formatWebSnapshotTabTitle, type WebSnapshotMeta } from '../../../shared/webSnapshot'
 import type { AnnotationTool, ChatMessage, TextSelectionContext } from '../types/global.d'
 
-export type DocumentType = 'txt' | 'md' | 'pdf' | 'docx' | 'settings' | 'unknown'
-export type SidebarTab = 'explorer' | 'notes'
+export type DocumentType = 'txt' | 'md' | 'pdf' | 'docx' | 'web' | 'web-snapshot' | 'settings' | 'unknown'
+export type SidebarTab = 'explorer' | 'notes' | 'web'
 export type SettingsSection = 'system' | 'skill' | 'mcp'
 
 export type LayoutPanelId = 'sidebar' | 'tabBar' | 'annotationToolbar' | 'aiPanel'
@@ -28,6 +31,17 @@ export interface FileTreeEntry {
   isDirectory: boolean
 }
 
+export type WebNavAction = 'back' | 'forward' | 'reload' | 'navigate'
+
+export interface WebViewSession {
+  docId: string
+  currentUrl: string
+  title: string
+  loading: boolean
+  canGoBack: boolean
+  canGoForward: boolean
+}
+
 interface WorkspaceState {
   documents: OpenDocument[]
   activeDocumentId: string | null
@@ -50,7 +64,13 @@ interface WorkspaceState {
   annotationStrokeWidth: number
   chatAttachedDoc: { path: string; name: string } | null
   chatDocContext: string | null
+  webSnapshotTick: number
+  webSession: WebViewSession | null
+  webNavSeq: number
+  webNavAction: { seq: number; action: WebNavAction; url?: string } | null
   openDocument: (doc: Omit<OpenDocument, 'id'>) => void
+  openWebPage: (url: string) => boolean
+  openWebSnapshot: (meta: WebSnapshotMeta) => void
   closeDocument: (id: string) => void
   closeOtherDocuments: (id: string) => void
   closeAllDocuments: () => void
@@ -59,7 +79,11 @@ interface WorkspaceState {
   setRootFolder: (path: string, files: FileTreeEntry[]) => void
   addRecentFile: (path: string) => void
   toggleAIPanel: () => void
+  openAIPanel: () => void
+  closeAIPanel: () => void
   toggleLayoutPanel: (panel: LayoutPanelId) => void
+  openSidebar: (tab?: SidebarTab) => void
+  closeSidebar: () => void
   setFloatingToolbar: (patch: Partial<FloatingToolbarState>) => void
   openSettings: (section?: SettingsSection) => void
   setSettingsSection: (section: SettingsSection) => void
@@ -73,6 +97,10 @@ interface WorkspaceState {
   setAnnotationStrokeWidth: (width: number) => void
   attachDocumentToChat: (path: string, name: string, content: string) => void
   detachDocumentFromChat: () => void
+  notifyWebSnapshotsChanged: () => void
+  setWebSession: (session: WebViewSession | null) => void
+  updateWebSession: (docId: string, patch: Partial<Omit<WebViewSession, 'docId'>>) => void
+  dispatchWebNav: (action: WebNavAction, url?: string) => void
   sendToAI: (text: string, docPath: string, range?: TextSelectionContext['range']) => void
 }
 
@@ -128,6 +156,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   annotationStrokeWidth: 2,
   chatAttachedDoc: null,
   chatDocContext: null,
+  webSnapshotTick: 0,
+  webSession: null,
+  webNavSeq: 0,
+  webNavAction: null,
 
   openDocument: (doc) => {
     const existing = get().documents.find((d) => d.path === doc.path)
@@ -151,6 +183,61 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
+  openWebPage: (rawUrl) => {
+    const url = resolveWebInput(rawUrl, getSearchEngine())
+    if (!url) return false
+    const layout = getWebBrowseLayoutPrefs()
+    set((state) => ({
+      showSidebar: layout.webBrowseHideSidebar ? false : state.showSidebar,
+      showAIPanel: layout.webBrowseHideAIPanel ? false : state.showAIPanel
+    }))
+    get().openDocument({
+      path: url,
+      name: webDisplayName(url),
+      type: 'web'
+    })
+    return true
+  },
+
+  openWebSnapshot: (meta) => {
+    get().openDocument({
+      path: meta.pdfPath,
+      name: formatWebSnapshotTabTitle(meta.title),
+      type: 'web-snapshot'
+    })
+  },
+
+  notifyWebSnapshotsChanged: () => {
+    set((state) => ({ webSnapshotTick: state.webSnapshotTick + 1 }))
+  },
+
+  setWebSession: (session) => set({ webSession: session }),
+
+  updateWebSession: (docId, patch) => {
+    set((state) => {
+      if (!state.webSession || state.webSession.docId !== docId) {
+        return {
+          webSession: {
+            docId,
+            currentUrl: patch.currentUrl ?? '',
+            title: patch.title ?? '',
+            loading: patch.loading ?? false,
+            canGoBack: patch.canGoBack ?? false,
+            canGoForward: patch.canGoForward ?? false
+          }
+        }
+      }
+      return { webSession: { ...state.webSession, ...patch } }
+    })
+  },
+
+  dispatchWebNav: (action, url) => {
+    set((state) => ({
+      webNavSeq: state.webNavSeq + 1,
+      webNavAction: { seq: state.webNavSeq + 1, action, url }
+    }))
+  },
+
   closeDocument: (id) => {
     set((state) => {
       const documents = state.documents.filter((d) => d.id !== id)
@@ -158,7 +245,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       if (activeDocumentId === id) {
         activeDocumentId = documents.length > 0 ? documents[documents.length - 1].id : null
       }
-      return { documents, activeDocumentId, selection: null }
+      const webSession = state.webSession?.docId === id ? null : state.webSession
+      return { documents, activeDocumentId, selection: null, webSession }
     })
   },
 
@@ -189,7 +277,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   setActiveDocument: (id) => set({ activeDocumentId: id, selection: null }),
 
-  setRootFolder: (path, files) => set({ rootFolder: path, fileTree: files }),
+  setRootFolder: (path, files) => {
+    set({ rootFolder: path, fileTree: files })
+    void window.api.skills.setProjectDir(path)
+  },
 
   addRecentFile: (path) => {
     set((state) => {
@@ -200,6 +291,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   toggleAIPanel: () => set((state) => ({ showAIPanel: !state.showAIPanel })),
+
+  openAIPanel: () => set({ showAIPanel: true }),
+
+  closeAIPanel: () => set({ showAIPanel: false }),
 
   toggleLayoutPanel: (panel) => {
     set((state) => {
@@ -217,6 +312,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       }
     })
   },
+
+  openSidebar: (tab) => {
+    set((state) => ({
+      showSidebar: true,
+      sidebarTab: tab ?? state.sidebarTab
+    }))
+  },
+
+  closeSidebar: () => set({ showSidebar: false }),
 
   setFloatingToolbar: (patch) => {
     set((state) => {

@@ -1,6 +1,8 @@
 import { copyFile, cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'fs/promises'
 import mammoth from 'mammoth'
 import { basename, extname, join } from 'path'
+import { isWebSnapshotPdfPath } from '../../shared/webSnapshot'
+import { getWebSnapshotDocumentContext } from './webSnapshotService'
 
 export const SUPPORTED_EXTENSIONS = new Set([
   '.txt',
@@ -15,13 +17,21 @@ export interface FileEntry {
   isDirectory: boolean
 }
 
-export function getFileType(filePath: string): 'txt' | 'md' | 'pdf' | 'docx' | 'unknown' {
+export function getFileType(
+  filePath: string
+): 'txt' | 'md' | 'pdf' | 'docx' | 'web-snapshot' | 'unknown' {
+  if (isWebSnapshotPdfPath(filePath)) return 'web-snapshot'
   const ext = extname(filePath).toLowerCase()
   if (ext === '.pdf') return 'pdf'
   if (ext === '.docx') return 'docx'
   if (ext === '.md') return 'md'
   if (ext === '.txt') return 'txt'
   return 'unknown'
+}
+
+export function isSupportedDocumentPath(filePath: string): boolean {
+  if (isWebSnapshotPdfPath(filePath)) return true
+  return SUPPORTED_EXTENSIONS.has(extname(filePath).toLowerCase())
 }
 
 export async function readTextFile(filePath: string): Promise<string> {
@@ -176,6 +186,10 @@ export interface DocumentContext {
 }
 
 export async function getDocumentContext(filePath: string): Promise<DocumentContext> {
+  if (isWebSnapshotPdfPath(filePath)) {
+    return getWebSnapshotDocumentContext(filePath)
+  }
+
   const fileName = basename(filePath)
   const ext = extname(filePath).toLowerCase()
   let content = ''

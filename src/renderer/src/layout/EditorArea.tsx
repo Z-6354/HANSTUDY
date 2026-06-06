@@ -2,10 +2,10 @@ import { useCallback, useEffect } from 'react'
 import { FilePlus, FolderOpen } from 'lucide-react'
 import { IconButton } from '../components/IconButton'
 import { AnnotationToolbar } from '../annotations/AnnotationToolbar'
-import { useWorkspaceStore } from '../stores/workspaceStore'
+import { useWorkspaceStore, SETTINGS_DOC_PATH } from '../stores/workspaceStore'
 import { DocumentViewerPane } from './DocumentViewerPane'
+import { GlobalSearchBar } from './GlobalSearchBar'
 import { TabBar } from './TabBar'
-import { SETTINGS_DOC_PATH } from '../stores/workspaceStore'
 
 export function EditorArea(): JSX.Element {
   const {
@@ -48,10 +48,13 @@ export function EditorArea(): JSX.Element {
 
   return (
     <div className="editor-area">
+      <GlobalSearchBar />
       {showTabBar && <TabBar onOpenFile={() => void handleOpenFile()} />}
 
       <div className="viewer-container">
-        {activeDoc && activeDoc.path !== SETTINGS_DOC_PATH && <AnnotationToolbar />}
+        {activeDoc && activeDoc.path !== SETTINGS_DOC_PATH && activeDoc.type !== 'web' && (
+          <AnnotationToolbar />
+        )}
         {documents.length === 0 ? (
           <div className="empty-state">
             <h2>欢迎使用 HAN Study Reader</h2>

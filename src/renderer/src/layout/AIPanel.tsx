@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  ChevronRight,
   FileText,
   History,
   Loader2,
@@ -49,7 +50,8 @@ export function AIPanel(): JSX.Element {
     chatAttachedDoc,
     chatDocContext,
     attachDocumentToChat,
-    detachDocumentFromChat
+    detachDocumentFromChat,
+    closeAIPanel
   } = useWorkspaceStore()
 
   const activeDoc = documents.find((d) => d.id === activeDocumentId)
@@ -82,10 +84,31 @@ export function AIPanel(): JSX.Element {
   const [aiSettings, setAiSettings] = useState<AISettings | null>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const requestIdRef = useRef<string | null>(null)
+  const streamingIdRef = useRef<string | null>(null)
+  const activeSessionIdRef = useRef(activeSessionId)
   const abortedRef = useRef(false)
+  const [insertFeedback, setInsertFeedback] = useState<string | null>(null)
+  const [activeSkills, setActiveSkills] = useState<Array<{ name: string; description: string }>>([])
+  const [enabledSkills, setEnabledSkills] = useState<Array<{ name: string; description: string }>>([])
+  const [excludedSkills, setExcludedSkills] = useState<string[]>([])
+
+  useEffect(() => {
+    streamingIdRef.current = streamingId
+  }, [streamingId])
+
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId
+  }, [activeSessionId])
 
   useEffect(() => {
     window.api.settings.getRaw().then(setAiSettings)
+    void window.api.skills.list().then((list) => {
+      setEnabledSkills(
+        list
+          .filter((skill) => skill.enabled)
+          .map((skill) => ({ name: skill.name, description: skill.description }))
+      )
+    })
   }, [])
 
   useEffect(() => {
@@ -133,14 +156,17 @@ export function AIPanel(): JSX.Element {
 
   useEffect(() => {
     const offChunk = window.api.ai.onStreamChunk((requestId, chunk) => {
-      if (requestId !== requestIdRef.current || !streamingId) return
-      const current = useChatStore.getState().messagesByDoc[activeSessionId]?.find(
-        (m) => m.id === streamingId
+      const streamId = streamingIdRef.current
+      const sessionId = activeSessionIdRef.current
+      if (requestId !== requestIdRef.current || !streamId) return
+      const current = useChatStore.getState().messagesByDoc[sessionId]?.find(
+        (m) => m.id === streamId
       )
-      updateMessage(activeSessionId, streamingId, (current?.content ?? '') + chunk)
+      updateMessage(sessionId, streamId, (current?.content ?? '') + chunk)
     })
-    const offDone = window.api.ai.onStreamDone((requestId) => {
+    const offDone = window.api.ai.onStreamDone((requestId, _full, skills) => {
       if (requestId !== requestIdRef.current) return
+      if (skills?.length) setActiveSkills(skills)
       setLoading(false)
       setStreamingId(null)
       requestIdRef.current = null
@@ -155,9 +181,10 @@ export function AIPanel(): JSX.Element {
     })
     const offError = window.api.ai.onStreamError((requestId, err) => {
       if (requestId !== requestIdRef.current || abortedRef.current) return
-      const assistantId = useChatStore.getState().streamingId
+      const assistantId = streamingIdRef.current
+      const sessionId = activeSessionIdRef.current
       if (assistantId) {
-        updateMessage(activeSessionId, assistantId, err, { isError: true })
+        updateMessage(sessionId, assistantId, err, { isError: true })
       }
       setLoading(false)
       setStreamingId(null)
@@ -169,10 +196,10 @@ export function AIPanel(): JSX.Element {
       offAborted()
       offError()
     }
-  }, [streamingId, setStreamingId, updateMessage, activeSessionId])
+  }, [setStreamingId, updateMessage])
 
   const handleAttachActiveDoc = async (): Promise<void> => {
-    if (!activeDoc || activeDoc.type === 'settings' || attaching) return
+    if (!activeDoc || activeDoc.type === 'settings' || activeDoc.type === 'web' || attaching) return
     setAttaching(true)
     setAttachError(null)
     try {
@@ -223,21 +250,45 @@ export function AIPanel(): JSX.Element {
         ? { fileName: chatAttachedDoc.name, content: chatDocContext }
         : undefined
 
-    await window.api.ai.chat(requestId, history, selectionText, documentContext, chatMode)
+    try {
+      await window.api.ai.chat(
+        requestId,
+        history,
+        selectionText,
+        documentContext,
+        chatMode,
+        excludedSkills
+      )
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '发送失败'
+      updateMessage(activeSessionId, assistantId, message, { isError: true })
+      setLoading(false)
+      setStreamingId(null)
+      requestIdRef.current = null
+    }
   }
 
   const handleInsertNote = async (content: string): Promise<void> => {
-    const noteDocPath = chatAttachedDoc?.path ?? (activeDoc?.type !== 'settings' ? activeDoc?.path : undefined)
+    const noteDocPath =
+      chatAttachedDoc?.path ??
+      (activeDoc?.type !== 'settings' && activeDoc?.type !== 'web' ? activeDoc?.path : undefined)
     if (!noteDocPath || !content.trim()) return
-    await window.api.annotations.create({
-      docPath: noteDocPath,
-      type: 'note',
-      color: '#ffd500',
-      selectedText: selection?.text,
-      content: content.trim(),
-      range: selection?.range
-    })
-    useWorkspaceStore.getState().notifyAnnotationsChanged()
+    setInsertFeedback(null)
+    try {
+      await window.api.annotations.create({
+        docPath: noteDocPath,
+        type: 'note',
+        color: '#ffd500',
+        selectedText: selection?.text,
+        content: content.trim(),
+        range: selection?.range
+      })
+      useWorkspaceStore.getState().notifyAnnotationsChanged()
+      setInsertFeedback('已插入便签')
+      window.setTimeout(() => setInsertFeedback(null), 2000)
+    } catch (err) {
+      setInsertFeedback(err instanceof Error ? err.message : '插入便签失败')
+    }
   }
 
   const handlePause = (): void => {
@@ -249,8 +300,18 @@ export function AIPanel(): JSX.Element {
     requestIdRef.current = null
   }
 
-  const canInsertNote = !!(chatAttachedDoc?.path ?? (activeDoc?.type !== 'settings' ? activeDoc?.path : undefined))
-  const readableActiveDoc = activeDoc && activeDoc.type !== 'settings' ? activeDoc : null
+  const toggleExcludedSkill = (name: string): void => {
+    setExcludedSkills((prev) =>
+      prev.includes(name) ? prev.filter((item) => item !== name) : [...prev, name]
+    )
+  }
+
+  const canInsertNote = !!(
+    chatAttachedDoc?.path ??
+    (activeDoc?.type !== 'settings' && activeDoc?.type !== 'web' ? activeDoc?.path : undefined)
+  )
+  const readableActiveDoc =
+    activeDoc && activeDoc.type !== 'settings' && activeDoc.type !== 'web' ? activeDoc : null
 
   return (
     <div className={`ai-panel ${showHistory ? 'with-history' : ''}`}>
@@ -303,6 +364,13 @@ export function AIPanel(): JSX.Element {
               label="清空当前对话"
               onClick={() => clearSession(activeSessionId)}
             />
+            <IconButton
+              icon={ChevronRight}
+              label="收起 AI 助手"
+              size={14}
+              className="ai-panel-collapse-btn"
+              onClick={closeAIPanel}
+            />
           </div>
         </div>
 
@@ -329,6 +397,7 @@ export function AIPanel(): JSX.Element {
             <span className="ai-context-hint">未加入文档，可直接对话</span>
           )}
           {attachError && <span className="ai-context-error">{attachError}</span>}
+          {insertFeedback && <span className="ai-insert-feedback">{insertFeedback}</span>}
         </div>
 
         <AskAIHint />
@@ -370,6 +439,35 @@ export function AIPanel(): JSX.Element {
         </div>
 
         <div className="ai-panel-input">
+          {(enabledSkills.length > 0 || activeSkills.length > 0) && (
+            <div className="ai-skill-bar">
+              {(enabledSkills.length ? enabledSkills : activeSkills).map((skill) => {
+                const isActive = activeSkills.some((item) => item.name === skill.name)
+                const isExcluded = excludedSkills.includes(skill.name)
+                return (
+                  <button
+                    key={skill.name}
+                    type="button"
+                    className={`ai-skill-chip ${isActive ? 'active' : ''} ${isExcluded ? 'excluded' : ''}`}
+                    title={skill.description}
+                    onClick={() => toggleExcludedSkill(skill.name)}
+                  >
+                    {skill.name}
+                    {isExcluded ? '（已跳过）' : ''}
+                  </button>
+                )
+              })}
+              {excludedSkills.length > 0 && (
+                <button
+                  type="button"
+                  className="ai-skill-reset"
+                  onClick={() => setExcludedSkills([])}
+                >
+                  恢复全部
+                </button>
+              )}
+            </div>
+          )}
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}

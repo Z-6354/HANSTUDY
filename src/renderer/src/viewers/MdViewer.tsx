@@ -1,8 +1,9 @@
-import Editor, { Monaco } from '@monaco-editor/react'
+import Editor from '@monaco-editor/react'
 import { Eye, Code } from 'lucide-react'
 import { IconButton } from '../components/IconButton'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
+import type * as MonacoApi from 'monaco-editor'
 import type { editor as MonacoEditor } from 'monaco-editor'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAnnotationSurface } from '../annotations/AnnotationSurfaceContext'
@@ -59,7 +60,7 @@ export function MdViewer({ filePath }: MdViewerProps): JSX.Element {
 
   const previewRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null)
-  const monacoRef = useRef<typeof Monaco | null>(null)
+  const monacoRef = useRef<typeof MonacoApi | null>(null)
   const decorationIdsRef = useRef<string[]>([])
   const [scrollSurface, setScrollSurface] = useState<HTMLElement | null>(null)
 

@@ -7,7 +7,10 @@ import {
   getProviderById,
   inferProviderId
 } from '../../../shared/aiProviders'
+import { WEB_SEARCH_ENGINE_OPTIONS } from '../../../shared/appSettings'
+import type { WebSearchEngine } from '../../../shared/webCrop'
 import { IconButton } from '../components/IconButton'
+import { useAppSettingsStore } from '../stores/appSettingsStore'
 import type { AISettings } from '../types/global.d'
 
 function buildDefaults(): AISettings {
@@ -22,6 +25,12 @@ function buildDefaults(): AISettings {
 
 export function SystemConfigPanel(): JSX.Element {
   const [settings, setSettings] = useState<AISettings>(buildDefaults)
+  const searchEngine = useAppSettingsStore((s) => s.searchEngine)
+  const setSearchEngine = useAppSettingsStore((s) => s.setSearchEngine)
+  const webBrowseHideSidebar = useAppSettingsStore((s) => s.webBrowseHideSidebar)
+  const webBrowseHideAIPanel = useAppSettingsStore((s) => s.webBrowseHideAIPanel)
+  const saveAppSettings = useAppSettingsStore((s) => s.saveSettings)
+  const [appSettingsMsg, setAppSettingsMsg] = useState('')
   const [apiKeyInput, setApiKeyInput] = useState('')
   const [hasStoredKey, setHasStoredKey] = useState(false)
   const [keyNeedsReenter, setKeyNeedsReenter] = useState(false)
@@ -236,6 +245,65 @@ export function SystemConfigPanel(): JSX.Element {
             onClick={() => void handleSave()}
           />
         </div>
+      </div>
+
+      <h2 className="settings-section-title settings-section-title-spaced">网页搜索</h2>
+      <p className="settings-section-desc">非网址内容将使用所选搜索引擎；默认必应。</p>
+      <div className="settings-form">
+        <label>
+          默认搜索引擎
+          <select
+            value={searchEngine}
+            onChange={(e) => {
+              const engine = e.target.value as WebSearchEngine
+              setAppSettingsMsg('')
+              void setSearchEngine(engine).then(
+                () => setAppSettingsMsg('搜索引擎已保存'),
+                () => setAppSettingsMsg('保存失败')
+              )
+            }}
+          >
+            {WEB_SEARCH_ENGINE_OPTIONS.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {appSettingsMsg && <p className="settings-msg">{appSettingsMsg}</p>}
+      </div>
+
+      <h2 className="settings-section-title settings-section-title-spaced">网页浏览布局</h2>
+      <p className="settings-section-desc">打开网页标签（搜索或输入网址）时，自动收起侧栏以留出阅读空间。</p>
+      <div className="settings-form">
+        <label className="settings-checkbox">
+          <input
+            type="checkbox"
+            checked={webBrowseHideSidebar}
+            onChange={(e) => {
+              setAppSettingsMsg('')
+              void saveAppSettings({ webBrowseHideSidebar: e.target.checked }).then(
+                () => setAppSettingsMsg('布局偏好已保存'),
+                () => setAppSettingsMsg('保存失败')
+              )
+            }}
+          />
+          打开网页时收起左侧栏（文件 / 标注 / 网页）
+        </label>
+        <label className="settings-checkbox">
+          <input
+            type="checkbox"
+            checked={webBrowseHideAIPanel}
+            onChange={(e) => {
+              setAppSettingsMsg('')
+              void saveAppSettings({ webBrowseHideAIPanel: e.target.checked }).then(
+                () => setAppSettingsMsg('布局偏好已保存'),
+                () => setAppSettingsMsg('保存失败')
+              )
+            }}
+          />
+          打开网页时收起 AI 助手面板
+        </label>
       </div>
     </div>
   )

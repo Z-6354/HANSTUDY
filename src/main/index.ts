@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron'
 import { join, extname } from 'path'
 import { stat } from 'fs/promises'
 import {
@@ -7,8 +7,23 @@ import {
   exportAnnotationsMarkdown,
   listAnnotations,
   updateAnnotation
-} from './services/annotationStore'
+} from './services/annotationBridge'
+import {
+  getAppSettings,
+  saveAppSettings
+} from './services/appSettingsService'
+import { hasJavaBackendJar, getBackendStatus, startJavaBackend, stopJavaBackend } from './services/javaBridge'
 import { getAISettings, normalizeApiKey, saveAISettings, streamChat } from './services/aiService'
+import {
+  disableSkill,
+  enableSkill,
+  getUserSkillsDir,
+  initSkillService,
+  installSkill,
+  listSkills,
+  reloadSkills,
+  setProjectSkillsDir
+} from './services/skills/skillService'
 import {
   collectFilesFromDirectory,
   createDirectory,
@@ -17,6 +32,7 @@ import {
   getDisplayName,
   getFileType,
   importFilesToDirectory,
+  isSupportedDocumentPath,
   listDirectory,
   getDocumentContext,
   readBinaryFile,
@@ -24,6 +40,51 @@ import {
   renamePath,
   SUPPORTED_EXTENSIONS
 } from './services/fileService'
+import {
+  deleteWebSnapshot,
+  getWebSnapshotMetaByPdfPath,
+  listWebSnapshots,
+  saveWebSnapshot
+} from './services/webSnapshotService'
+import {
+  logWebDiagnostics,
+  probeWebUrl,
+  runWebDiagnostics
+} from './services/webDiagnosticsService'
+import {
+  addWebBookmark,
+  addWebHistory,
+  addWebPhone,
+  clearWebHistory,
+  getWebCredentialPassword,
+  isWebBookmarked,
+  listWebBookmarks,
+  listWebCredentials,
+  listWebHistory,
+  listWebPhones,
+  removeWebBookmark,
+  removeWebCredential,
+  removeWebHistory,
+  removeWebPhone,
+  saveWebCredential
+} from './services/webLibraryService'
+import {
+  attachWebGuest,
+  destroyWebGuest,
+  destroyWebGuestDoc,
+  detachWebGuest,
+  getWebGuestNavigation,
+  getWebGuestUrl,
+  initWebGuestService,
+  navigateWebGuest,
+  openWebGuestDevTools,
+  reloadWebGuest,
+  setWebGuestBounds,
+  webGuestGoBack,
+  webGuestGoForward
+} from './services/webGuestService'
+import type { SaveWebCredentialInput } from '../shared/webLibrary'
+import type { AppSettings } from '../shared/appSettings'
 import type { Annotation, AISettings } from '../shared/types'
 
 const isDev = !app.isPackaged
@@ -45,7 +106,8 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      webviewTag: true
     }
   })
 
@@ -59,11 +121,20 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
+  mainWindow.webContents.on('will-attach-webview', (_event, webPreferences) => {
+    webPreferences.nodeIntegration = false
+    webPreferences.contextIsolation = true
+    webPreferences.javascript = true
+    webPreferences.webgl = true
+  })
+
   if (isDev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+
+  initWebGuestService(mainWindow)
 }
 
 function registerIpcHandlers(): void {
@@ -147,12 +218,11 @@ function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('fs:getFileInfo', async (_event, filePath: string) => {
-    const ext = extname(filePath).toLowerCase()
     return {
       path: filePath,
       name: getDisplayName(filePath),
       type: getFileType(filePath),
-      supported: SUPPORTED_EXTENSIONS.has(ext)
+      supported: isSupportedDocumentPath(filePath)
     }
   })
 
@@ -178,7 +248,7 @@ function registerIpcHandlers(): void {
       path: newPath,
       name: getDisplayName(newPath),
       type: getFileType(newPath),
-      supported: SUPPORTED_EXTENSIONS.has(ext)
+      supported: isSupportedDocumentPath(newPath)
     }
   })
 
@@ -235,6 +305,52 @@ function registerIpcHandlers(): void {
     return true
   })
 
+  ipcMain.handle('appSettings:get', async () => getAppSettings())
+
+  ipcMain.handle('appSettings:save', async (_event, settings: AppSettings) => {
+    await saveAppSettings(settings)
+    return true
+  })
+
+  ipcMain.handle('skills:list', async () => listSkills())
+
+  ipcMain.handle('skills:enable', async (_event, name: string) => {
+    await enableSkill(name)
+    return true
+  })
+
+  ipcMain.handle('skills:disable', async (_event, name: string) => {
+    await disableSkill(name)
+    return true
+  })
+
+  ipcMain.handle('skills:reload', async () => {
+    await reloadSkills()
+    return listSkills()
+  })
+
+  ipcMain.handle('skills:install', async () => {
+    const result = await dialog.showOpenDialog(mainWindow!, {
+      title: '选择 Skill 文件夹',
+      properties: ['openDirectory']
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    const name = await installSkill(result.filePaths[0])
+    return { name, skills: await listSkills() }
+  })
+
+  ipcMain.handle('skills:openDir', async () => {
+    const dir = getUserSkillsDir()
+    await shell.openPath(dir)
+    return dir
+  })
+
+  ipcMain.handle('skills:setProjectDir', async (_event, rootFolder: string | null) => {
+    setProjectSkillsDir(rootFolder?.trim() || null)
+    await reloadSkills()
+    return listSkills()
+  })
+
   ipcMain.handle(
     'ai:chat',
     async (
@@ -243,26 +359,28 @@ function registerIpcHandlers(): void {
       messages: Array<{ role: string; content: string }>,
       contextText?: string,
       documentContext?: { fileName: string; content: string },
-      chatMode?: import('../shared/types').ChatMode
+      chatMode?: import('../shared/types').ChatMode,
+      excludedSkills?: string[]
     ) => {
       const controller = new AbortController()
       activeAiAborts.set(requestId, controller)
 
       try {
-        const full = await streamChat(
+        const result = await streamChat(
           {
             messages: messages as Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
             contextText,
             documentContext,
-            chatMode
+            chatMode,
+            excludedSkills
           },
           (chunk) => {
             event.sender.send('ai:stream-chunk', requestId, chunk)
           },
           controller.signal
         )
-        event.sender.send('ai:stream-done', requestId, full)
-        return { ok: true }
+        event.sender.send('ai:stream-done', requestId, result.text, result.activeSkills)
+        return { ok: true, activeSkills: result.activeSkills }
       } catch (err) {
         if (controller.signal.aborted) {
           event.sender.send('ai:stream-aborted', requestId)
@@ -281,21 +399,203 @@ function registerIpcHandlers(): void {
     activeAiAborts.get(requestId)?.abort()
     activeAiAborts.delete(requestId)
   })
+
+  ipcMain.handle('web:openExternal', async (_event, url: string) => {
+    const trimmed = url?.trim()
+    if (!trimmed) return false
+    try {
+      const parsed = new URL(trimmed)
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false
+      await shell.openExternal(parsed.href)
+      return true
+    } catch {
+      return false
+    }
+  })
+
+  ipcMain.handle('web:saveSnapshot', async (_event, input: import('../shared/webSnapshot').SaveWebSnapshotInput) => {
+    return saveWebSnapshot(input)
+  })
+
+  ipcMain.handle('web:listSnapshots', async () => listWebSnapshots())
+
+  ipcMain.handle('web:getSnapshotMeta', async (_event, pdfPath: string) => {
+    return getWebSnapshotMetaByPdfPath(pdfPath)
+  })
+
+  ipcMain.handle('web:deleteSnapshot', async (_event, id: string) => deleteWebSnapshot(id))
+
+  ipcMain.handle('web:runDiagnostics', async () => {
+    const report = await runWebDiagnostics()
+    logWebDiagnostics(report)
+    return report
+  })
+
+  ipcMain.handle('web:probeUrl', async (_event, url: string) => {
+    return probeWebUrl(url)
+  })
+
+  ipcMain.handle('webLibrary:listHistory', async () => listWebHistory())
+  ipcMain.handle('webLibrary:addHistory', async (_event, url: string, title: string) =>
+    addWebHistory(url, title)
+  )
+  ipcMain.handle('webLibrary:removeHistory', async (_event, id: string) => removeWebHistory(id))
+  ipcMain.handle('webLibrary:clearHistory', async () => clearWebHistory())
+
+  ipcMain.handle('webLibrary:listBookmarks', async () => listWebBookmarks())
+  ipcMain.handle('webLibrary:addBookmark', async (_event, url: string, title: string) =>
+    addWebBookmark(url, title)
+  )
+  ipcMain.handle('webLibrary:removeBookmark', async (_event, id: string) => removeWebBookmark(id))
+  ipcMain.handle('webLibrary:isBookmarked', async (_event, url: string) => isWebBookmarked(url))
+
+  ipcMain.handle('webLibrary:listCredentials', async () => listWebCredentials())
+  ipcMain.handle('webLibrary:saveCredential', async (_event, input: SaveWebCredentialInput) =>
+    saveWebCredential(input)
+  )
+  ipcMain.handle('webLibrary:removeCredential', async (_event, id: string) =>
+    removeWebCredential(id)
+  )
+  ipcMain.handle('webLibrary:getCredentialPassword', async (_event, id: string) =>
+    getWebCredentialPassword(id)
+  )
+
+  ipcMain.handle('webLibrary:listPhones', async () => listWebPhones())
+  ipcMain.handle('webLibrary:addPhone', async (_event, phone: string, origin?: string) => {
+    const phones = await addWebPhone(phone, origin)
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send('webLibrary:phonesChanged', phones)
+    }
+    return phones
+  })
+  ipcMain.handle('webLibrary:removePhone', async (_event, id: string) => {
+    const phones = await removeWebPhone(id)
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send('webLibrary:phonesChanged', phones)
+    }
+    return phones
+  })
+
+  ipcMain.handle('webGuest:attach', async (_event, docId: string, bounds) => {
+    attachWebGuest(docId, bounds)
+    return { ok: true, url: getWebGuestUrl(), ...getWebGuestNavigation() }
+  })
+  ipcMain.handle('webGuest:detach', async () => {
+    detachWebGuest()
+    return { ok: true }
+  })
+  ipcMain.handle('webGuest:destroy', async () => {
+    destroyWebGuest()
+    return { ok: true }
+  })
+  ipcMain.handle('webGuest:destroyDoc', async (_event, docId: string) => {
+    destroyWebGuestDoc(docId)
+    return { ok: true }
+  })
+  ipcMain.handle('webGuest:setBounds', async (_event, bounds) => {
+    setWebGuestBounds(bounds)
+    return { ok: true }
+  })
+  ipcMain.handle('webGuest:navigate', async (_event, docId: string, url: string) => {
+    const started = navigateWebGuest(docId, url)
+    return { ok: true, url: getWebGuestUrl(), started }
+  })
+  ipcMain.handle('webGuest:back', async () => ({ ok: webGuestGoBack() }))
+  ipcMain.handle('webGuest:forward', async () => ({ ok: webGuestGoForward() }))
+  ipcMain.handle('webGuest:reload', async () => {
+    reloadWebGuest()
+    return { ok: true }
+  })
+  ipcMain.handle('webGuest:getState', async () => ({
+    url: getWebGuestUrl(),
+    ...getWebGuestNavigation()
+  }))
+  ipcMain.handle('webGuest:openDevTools', async () => {
+    openWebGuestDevTools()
+    return { ok: true }
+  })
+
+  ipcMain.handle('backend:getStatus', async () => getBackendStatus())
 }
 
-app.whenReady().then(() => {
-  if (process.platform === 'win32') {
-    app.setAppUserModelId('com.hanstudy.reader')
-  }
-
-  registerIpcHandlers()
-  createWindow()
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
   })
-})
+}
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
-})
+function setupWebviewSession(): void {
+  const webPartition = session.fromPartition('persist:hanstudy-web')
+  const ua = webPartition
+    .getUserAgent()
+    .replace(/\sElectron\/[^\s]+/g, '')
+    .replace(/\sHanStudy[^\s]*/gi, '')
+    .trim()
+  if (ua) {
+    webPartition.setUserAgent(ua)
+  }
+  webPartition.setPermissionRequestHandler((_wc, _permission, callback) => {
+    callback(true)
+  })
+}
+
+function bootApp(): void {
+  void (async () => {
+    if (process.platform === 'win32') {
+      app.setAppUserModelId('com.hanstudy.reader')
+    }
+
+    setupWebviewSession()
+
+    if (hasJavaBackendJar()) {
+      try {
+        await startJavaBackend()
+        console.log('[main] Java backend started')
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        console.error('[main] Java backend failed to start, falling back to Node services:', message)
+        if (app.isPackaged) {
+          dialog.showErrorBox(
+            '标注服务启动失败',
+            `Java 后端未能启动，标注将使用本地备用存储。\n\n${message}\n\n若持续出现，请重新安装应用或联系支持。`
+          )
+        }
+      }
+    }
+
+    try {
+      await initSkillService()
+      console.log('[main] Skill service initialized')
+    } catch (err) {
+      console.error('[main] Skill service failed to initialize:', err)
+    }
+
+    registerIpcHandlers()
+    createWindow()
+  })()
+}
+
+if (gotSingleInstanceLock) {
+  app.whenReady().then(() => {
+    bootApp()
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    })
+  })
+
+  app.on('before-quit', () => {
+    destroyWebGuest()
+    void stopJavaBackend()
+  })
+
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit()
+  })
+}

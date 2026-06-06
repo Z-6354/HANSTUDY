@@ -10,6 +10,7 @@ import {
 } from '../../shared/aiProviders'
 import { getSystemPromptForMode } from '../../shared/chatModes'
 import type { AISettings, ChatMode } from '../../shared/types'
+import { resolveSkillsForChat } from './skills/skillService'
 
 const SETTINGS_FILE = 'ai-settings.json'
 const ENC_PREFIX = 'enc:'
@@ -221,13 +222,19 @@ export interface ChatRequest {
   contextText?: string
   documentContext?: { fileName: string; content: string }
   chatMode?: ChatMode
+  excludedSkills?: string[]
+}
+
+export interface ChatResult {
+  text: string
+  activeSkills: Array<{ name: string; description: string }>
 }
 
 export async function streamChat(
   request: ChatRequest,
   onChunk: (text: string) => void,
   signal: AbortSignal
-): Promise<string> {
+): Promise<ChatResult> {
   const settings = await getAISettings()
   const apiKey = normalizeApiKey(settings.apiKey)
   if (!apiKey) {
@@ -236,7 +243,20 @@ export async function streamChat(
 
   const baseUrl = settings.baseUrl.replace(/\/$/, '')
   const providerId = settings.provider || inferProviderId(baseUrl)
-  const systemPrompt = getSystemPromptForMode(request.chatMode ?? 'chat')
+  const chatMode = request.chatMode ?? 'chat'
+
+  const lastUserMessage =
+    [...request.messages].reverse().find((m) => m.role === 'user')?.content ?? ''
+  const skillContext = await resolveSkillsForChat(
+    lastUserMessage,
+    chatMode,
+    request.excludedSkills
+  )
+
+  let systemPrompt = getSystemPromptForMode(chatMode)
+  if (skillContext.systemPromptExtra) {
+    systemPrompt = `${systemPrompt}\n\n${skillContext.systemPromptExtra}`
+  }
 
   const contextMessages: Array<{ role: 'user'; content: string }> = []
   if (request.documentContext?.content) {
@@ -312,9 +332,10 @@ export async function streamChat(
         if (data === '[DONE]') continue
         try {
           const json = JSON.parse(data) as {
-            choices?: Array<{ delta?: { content?: string } }>
+            choices?: Array<{ delta?: { content?: string; reasoning_content?: string } }>
           }
-          const chunk = json.choices?.[0]?.delta?.content ?? ''
+          const delta = json.choices?.[0]?.delta
+          const chunk = delta?.content ?? delta?.reasoning_content ?? ''
           if (chunk) {
             fullText += chunk
             onChunk(chunk)
@@ -326,10 +347,10 @@ export async function streamChat(
     }
   } catch (err) {
     if (signal.aborted) {
-      return fullText
+      return { text: fullText, activeSkills: skillContext.meta.activeSkills }
     }
     throw err
   }
 
-  return fullText
+  return { text: fullText, activeSkills: skillContext.meta.activeSkills }
 }

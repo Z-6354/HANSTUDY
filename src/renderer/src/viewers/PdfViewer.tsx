@@ -115,7 +115,7 @@ export function PdfViewer({ filePath }: PdfViewerProps): JSX.Element {
     const handleScroll = (): void => {
       const pages = container.querySelectorAll<HTMLElement>('.pdf-page-wrap')
       const containerTop = container.getBoundingClientRect().top
-      for (const page of pages) {
+      for (const page of Array.from(pages)) {
         const rect = page.getBoundingClientRect()
         if (rect.top <= containerTop + 100 && rect.bottom > containerTop) {
           setCurrentPage(Number(page.dataset.page))

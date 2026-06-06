@@ -102,6 +102,27 @@ export function applyStoredDomAnnotations(root: HTMLElement, annotations: Annota
   }
 }
 
+export function scrollToAnnotationText(root: HTMLElement, selectedText: string): boolean {
+  if (!selectedText.trim()) return false
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  let node: Node | null
+  while ((node = walker.nextNode())) {
+    const text = node.textContent ?? ''
+    const index = text.indexOf(selectedText)
+    if (index === -1) continue
+    const range = document.createRange()
+    range.setStart(node, index)
+    range.setEnd(node, index + Math.min(selectedText.length, text.length - index))
+    const rect = range.getBoundingClientRect()
+    if (rect.height <= 0) continue
+    const scrollHost = root.closest('.annotated-viewer') ?? root
+    scrollHost.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    ;(node.parentElement ?? root).scrollIntoView({ behavior: 'smooth', block: 'center' })
+    return true
+  }
+  return false
+}
+
 export function blockViewerContextMenu(e: { preventDefault(): void }): void {
   if (useWorkspaceStore.getState().annotationTool !== 'pen') {
     e.preventDefault()

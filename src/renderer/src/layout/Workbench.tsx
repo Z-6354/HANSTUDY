@@ -1,9 +1,11 @@
 import { Allotment } from 'allotment'
 import 'allotment/dist/style.css'
 import { useWorkspaceStore } from '../stores/workspaceStore'
+import { AIRail } from './AIRail'
 import { AIPanel } from './AIPanel'
 import { EditorArea } from './EditorArea'
 import { SideBar } from './SideBar'
+import { SidebarRail } from './SidebarRail'
 
 export function Workbench(): JSX.Element {
   const showAIPanel = useWorkspaceStore((s) => s.showAIPanel)
@@ -26,6 +28,10 @@ export function Workbench(): JSX.Element {
           </Allotment.Pane>
         )}
       </Allotment>
+      <div className="layout-rails-layer" aria-hidden={false}>
+        {!showSidebar && <SidebarRail />}
+        {!showAIPanel && <AIRail />}
+      </div>
     </div>
   )
 }

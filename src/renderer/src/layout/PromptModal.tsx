@@ -5,6 +5,7 @@ interface PromptModalProps {
   label: string
   defaultValue?: string
   placeholder?: string
+  error?: string
   onSubmit: (value: string) => void
   onCancel: () => void
 }
@@ -14,6 +15,7 @@ export function PromptModal({
   label,
   defaultValue = '',
   placeholder,
+  error,
   onSubmit,
   onCancel
 }: PromptModalProps): JSX.Element {
@@ -36,6 +38,7 @@ export function PromptModal({
             }}
           />
         </label>
+        {error && <p className="settings-msg settings-warn">{error}</p>}
         <div className="modal-actions">
           <button className="secondary-btn" onClick={onCancel}>
             取消

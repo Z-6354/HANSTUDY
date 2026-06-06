@@ -1,8 +1,9 @@
-import { useState } from 'react'
-import { Download, Trash2 } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Download, ExternalLink, Trash2 } from 'lucide-react'
 import { IconButton } from '../components/IconButton'
 import { useAnnotations } from '../annotations/useAnnotations'
 import { useWorkspaceStore } from '../stores/workspaceStore'
+import type { WebSnapshotMeta } from '../types/global.d'
 
 function typeLabel(type: string): string {
   if (type === 'highlight') return '高亮'
@@ -15,17 +16,41 @@ function typeLabel(type: string): string {
 export function NotesPanel(): JSX.Element {
   const { documents, activeDocumentId, setFocusAnnotationId, setSidebarTab } = useWorkspaceStore()
   const activeDoc = documents.find((d) => d.id === activeDocumentId)
-  const docPath = activeDoc?.path ?? ''
-  const { annotations, loading, remove } = useAnnotations(docPath || '__none__')
+  const isReadableDoc =
+    activeDoc &&
+    activeDoc.type !== 'settings' &&
+    activeDoc.type !== 'unknown' &&
+    activeDoc.type !== 'web'
+  const docPath = isReadableDoc ? activeDoc.path : ''
+  const { annotations, loading, error, remove } = useAnnotations(docPath || '__none__')
   const [exporting, setExporting] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [storageMode, setStorageMode] = useState<'java' | 'node'>('node')
+  const [snapshotMeta, setSnapshotMeta] = useState<WebSnapshotMeta | null>(null)
+
+  useEffect(() => {
+    if (activeDoc?.type === 'web-snapshot') {
+      void window.api.web.getSnapshotMeta(activeDoc.path).then(setSnapshotMeta)
+    } else {
+      setSnapshotMeta(null)
+    }
+  }, [activeDoc?.path, activeDoc?.type])
+
+  useEffect(() => {
+    void window.api.backend.getStatus().then((s) => setStorageMode(s.storageMode))
+  }, [annotations.length])
 
   const handleExport = async (): Promise<void> => {
     if (!docPath) return
     setExporting(true)
+    setActionError(null)
     try {
       const md = await window.api.annotations.exportMarkdown(docPath)
       const name = activeDoc?.name.replace(/\.[^.]+$/, '') + '-annotations.md'
-      await window.api.dialog.saveMarkdown(md, name)
+      const saved = await window.api.dialog.saveMarkdown(md, name)
+      if (!saved) return
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : '导出失败')
     } finally {
       setExporting(false)
     }
@@ -39,10 +64,37 @@ export function NotesPanel(): JSX.Element {
     )
   }
 
+  if (!isReadableDoc) {
+    return (
+      <div className="notes-panel-empty">
+        <p>{activeDoc?.type === 'web' ? '在线网页不支持标注，请先点击「保存网页」' : '当前标签页不支持标注'}</p>
+      </div>
+    )
+  }
+
   return (
     <div className="notes-panel">
+      {snapshotMeta && (
+        <div className="notes-snapshot-source">
+          <span className="notes-snapshot-label">网页快照</span>
+          <button
+            type="button"
+            className="notes-snapshot-link"
+            title={snapshotMeta.sourceUrl}
+            onClick={() => void window.api.web.openExternal(snapshotMeta.sourceUrl)}
+          >
+            <ExternalLink size={12} aria-hidden />
+            {snapshotMeta.sourceUrl}
+          </button>
+        </div>
+      )}
       <div className="sidebar-header">
-        <span>标注 ({annotations.length})</span>
+        <span>
+          标注 ({annotations.length})
+          <span className="notes-storage-badge">
+            {storageMode === 'java' ? 'Java' : '本地'}
+          </span>
+        </span>
         <IconButton
           icon={Download}
           label="导出 Markdown"
@@ -50,6 +102,9 @@ export function NotesPanel(): JSX.Element {
           onClick={() => void handleExport()}
         />
       </div>
+      {(error || actionError) && (
+        <div className="notes-error">{error ?? actionError}</div>
+      )}
       <div className="notes-list">
         {loading && <div className="notes-empty">加载中...</div>}
         {!loading && annotations.length === 0 && (
@@ -73,7 +128,10 @@ export function NotesPanel(): JSX.Element {
                 className="note-delete"
                 onClick={(e) => {
                   e.stopPropagation()
-                  void remove(item.id)
+                  setActionError(null)
+                  void remove(item.id).catch((err) => {
+                    setActionError(err instanceof Error ? err.message : '删除失败')
+                  })
                 }}
               />
             </div>

@@ -1,4 +1,5 @@
-import Editor, { Monaco } from '@monaco-editor/react'
+import Editor from '@monaco-editor/react'
+import type * as MonacoApi from 'monaco-editor'
 import type { editor as MonacoEditor } from 'monaco-editor'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAnnotationSurface } from '../annotations/AnnotationSurfaceContext'
@@ -24,7 +25,7 @@ export function TxtViewer({ filePath }: TxtViewerProps): JSX.Element {
   const [showNoteModal, setShowNoteModal] = useState(false)
 
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null)
-  const monacoRef = useRef<typeof Monaco | null>(null)
+  const monacoRef = useRef<typeof MonacoApi | null>(null)
   const decorationIdsRef = useRef<string[]>([])
   const [scrollSurface, setScrollSurface] = useState<HTMLElement | null>(null)
 
