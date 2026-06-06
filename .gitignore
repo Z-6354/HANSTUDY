@@ -11,6 +11,8 @@ hancli/
 .vscode/
 java-backend/target
 java-backend/.gradle
+java-backend/META-INF/
+java-backend/dependency-reduced-pom.xml
 .tools
 java-backend/.tools
 java-backend/.idea

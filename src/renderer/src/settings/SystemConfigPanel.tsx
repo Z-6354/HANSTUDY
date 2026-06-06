@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Save } from 'lucide-react'
+import { Save, RefreshCw } from 'lucide-react'
 import {
   AI_PROVIDERS,
   DEFAULT_PROVIDER_ID,
@@ -36,6 +36,13 @@ export function SystemConfigPanel(): JSX.Element {
   const [keyNeedsReenter, setKeyNeedsReenter] = useState(false)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
+  const [backendStatus, setBackendStatus] = useState<{
+    jarAvailable: boolean
+    javaRunning: boolean
+    storageMode: 'java' | 'node'
+    fallbackReason?: string
+  } | null>(null)
+  const [backendLoading, setBackendLoading] = useState(false)
 
   const provider = getProviderById(settings.provider)
   const isCustom = settings.provider === 'custom'
@@ -59,6 +66,21 @@ export function SystemConfigPanel(): JSX.Element {
       setKeyNeedsReenter(stored && !raw.apiKey.trim())
       setApiKeyInput('')
     })()
+  }, [])
+
+  const refreshBackendStatus = async (): Promise<void> => {
+    setBackendLoading(true)
+    try {
+      setBackendStatus(await window.api.backend.getStatus())
+    } catch {
+      setBackendStatus(null)
+    } finally {
+      setBackendLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void refreshBackendStatus()
   }, [])
 
   const handleProviderChange = (providerId: string): void => {
@@ -304,6 +326,31 @@ export function SystemConfigPanel(): JSX.Element {
           />
           打开网页时收起 AI 助手面板
         </label>
+      </div>
+
+      <h2 className="settings-section-title settings-section-title-spaced">标注后端</h2>
+      <p className="settings-section-desc">Java 后端负责标注持久化；不可用时自动回退到 Node 本地存储。</p>
+      <div className="settings-form backend-status-panel">
+        <div className="backend-status-grid">
+          <span>JAR 包</span>
+          <code>{backendStatus == null ? '…' : backendStatus.jarAvailable ? '已找到' : '未找到'}</code>
+          <span>Java 进程</span>
+          <code>{backendStatus == null ? '…' : backendStatus.javaRunning ? '运行中' : '未运行'}</code>
+          <span>存储模式</span>
+          <code>{backendStatus == null ? '…' : backendStatus.storageMode === 'java' ? 'Java 后端' : 'Node 回退'}</code>
+        </div>
+        {backendStatus?.fallbackReason && (
+          <p className="settings-hint settings-warn">回退原因：{backendStatus.fallbackReason}</p>
+        )}
+        <div className="settings-form-actions">
+          <IconButton
+            icon={RefreshCw}
+            label={backendLoading ? '刷新中…' : '刷新状态'}
+            className={backendLoading ? 'spinning' : ''}
+            disabled={backendLoading}
+            onClick={() => void refreshBackendStatus()}
+          />
+        </div>
       </div>
     </div>
   )
