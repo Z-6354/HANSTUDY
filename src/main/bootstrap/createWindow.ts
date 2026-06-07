@@ -36,16 +36,6 @@ export function createMainWindow(): BrowserWindow {
   win.webContents.on('did-finish-load', lockPageZoom)
   win.webContents.on('zoom-changed', lockPageZoom)
 
-  // 兜底：尽快复位整页 zoom（含触控板 pinch 误触后的短暂放大）
-  const zoomWatch = setInterval(() => {
-    if (win.isDestroyed()) {
-      clearInterval(zoomWatch)
-      return
-    }
-    lockPageZoom()
-  }, 100)
-  win.on('closed', () => clearInterval(zoomWatch))
-
   const notifyMaximizeChanged = (): void => {
     if (!win) return
     win.webContents.send(IPC.window.maximizedChanged, win.isMaximized())
@@ -74,6 +64,7 @@ export function createMainWindow(): BrowserWindow {
 
     if (input.type === 'mouseWheel' && (input.control || input.meta)) {
       event.preventDefault()
+      lockPageZoom()
       return
     }
 

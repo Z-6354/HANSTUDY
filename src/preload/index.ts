@@ -33,7 +33,7 @@ const api = {
     maximize: (): Promise<void> => ipcRenderer.invoke('window:maximize'),
     close: (): Promise<void> => ipcRenderer.invoke('window:close'),
     isMaximized: (): Promise<boolean> => ipcRenderer.invoke('window:isMaximized'),
-    resetPageZoom: (): Promise<void> => ipcRenderer.invoke('window:resetPageZoom'),
+    resetPageZoom: (): Promise<void> => ipcRenderer.invoke(IPC.window.resetPageZoom),
     onMaximizedChanged: (cb: (maximized: boolean) => void): (() => void) => {
       const handler = (_e: IpcRendererEvent, maximized: boolean): void => cb(maximized)
       ipcRenderer.on('window:maximized-changed', handler)

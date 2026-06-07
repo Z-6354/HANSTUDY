@@ -139,3 +139,8 @@ export function isPriorityPdfPage(page: number, currentPage: number): boolean {
 export function pageRenderPriority(page: number, currentPage: number): number {
   return Math.abs(page - currentPage)
 }
+
+/** 读取元素上经典滚动条占用的 layout 宽度（overlay 滚动条时为 0） */
+export function readScrollbarGutter(el: HTMLElement): number {
+  return Math.max(0, el.offsetWidth - el.clientWidth)
+}

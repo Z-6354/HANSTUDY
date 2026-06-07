@@ -1,6 +1,7 @@
 import { LayoutGrid } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import type { TxtChapter } from './textChapters'
+import { scrollContainerToChild } from './pdfViewerPerf'
 import { getChapterThumbSnippet } from './txtChapterFormat'
 import { useDragScroll } from './useDragScroll'
 
@@ -35,7 +36,7 @@ export function TextChapterThumbnailPanel({
       const active = root?.querySelector<HTMLElement>('.txt-chapter-thumb-item.active')
       if (!root || !active) return
       if (!isVisible(root, active)) {
-        active.scrollIntoView({ block: 'center', behavior: 'auto' })
+        scrollContainerToChild(root, active, root.clientHeight / 2 - active.clientHeight / 2)
       }
     }
 

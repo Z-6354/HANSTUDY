@@ -65,6 +65,8 @@ export function TextDocumentShell({
           />
         </PdfSideHover>
 
+        <div ref={contentRef} className="text-doc-content">{children}</div>
+
         {renderThumbPanel && (
           <PdfSideHover
             side="right"
@@ -76,8 +78,6 @@ export function TextDocumentShell({
             {renderThumbPanel(thumbOpen)}
           </PdfSideHover>
         )}
-
-        <div ref={contentRef} className="text-doc-content">{children}</div>
       </div>
     </div>
   )

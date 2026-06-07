@@ -5,6 +5,9 @@ interface PdfSideHoverProps {
   open: boolean
   setOpen: (open: boolean) => void
   label: string
+  /** 为 true 时鼠标离开不自动收起（点击或工具栏打开） */
+  pinned?: boolean
+  onPinnedChange?: (pinned: boolean) => void
   /** 面板展开前同步调用（如提交 PDF 缩放预览） */
   onHoverStart?: () => void
   children: ReactNode
@@ -17,25 +20,55 @@ export function PdfSideHover({
   open,
   setOpen,
   label,
+  pinned = false,
+  onPinnedChange,
   onHoverStart,
   children
 }: PdfSideHoverProps): JSX.Element {
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const handleOpen = (): void => {
+  const clearCloseTimer = (): void => {
     if (closeTimerRef.current) {
       clearTimeout(closeTimerRef.current)
       closeTimerRef.current = null
     }
+  }
+
+  const openPanel = (): void => {
+    clearCloseTimer()
     if (onHoverStart) {
       onHoverStart()
-    } else {
-      setOpen(true)
+      return
     }
+    setOpen(true)
+  }
+
+  const closePanel = (): void => {
+    clearCloseTimer()
+    onPinnedChange?.(false)
+    setOpen(false)
+  }
+
+  const handleHoverEnter = (): void => {
+    if (pinned) return
+    openPanel()
+  }
+
+  const handleTriggerClick = (e: React.MouseEvent<HTMLButtonElement>): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    clearCloseTimer()
+    if (open) {
+      closePanel()
+      return
+    }
+    onPinnedChange?.(true)
+    openPanel()
   }
 
   const handleLeave = (): void => {
-    if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
+    if (pinned) return
+    clearCloseTimer()
     closeTimerRef.current = setTimeout(() => {
       closeTimerRef.current = null
       setOpen(false)
@@ -43,9 +76,7 @@ export function PdfSideHover({
   }
 
   useEffect(() => {
-    return () => {
-      if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
-    }
+    return () => clearCloseTimer()
   }, [])
 
   const rootRef = useRef<HTMLDivElement>(null)
@@ -71,26 +102,20 @@ export function PdfSideHover({
       onMouseLeave={handleLeave}
       aria-label={label}
     >
-      <div
+      <button
+        type="button"
         className="pdf-side-trigger"
         title={label}
-        role="button"
-        tabIndex={0}
         aria-label={label}
-        onMouseEnter={handleOpen}
-        onClick={handleOpen}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault()
-            handleOpen()
-          }
-        }}
+        aria-expanded={open}
+        onMouseEnter={handleHoverEnter}
+        onClick={handleTriggerClick}
       />
       <div
         className={`pdf-side-panel pdf-side-panel--${side}${open ? '' : ' pdf-side-panel--collapsed'}`}
         role="region"
         aria-hidden={!open}
-        onMouseEnter={handleOpen}
+        onMouseEnter={handleHoverEnter}
       >
         {children}
       </div>

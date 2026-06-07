@@ -1,6 +1,7 @@
 import { LayoutGrid } from 'lucide-react'
 import * as pdfjsLib from 'pdfjs-dist'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { scrollContainerToChild } from './pdfViewerPerf'
 import { renderPdfThumbnail } from './pdfThumbnails'
 import { useDragScroll } from './useDragScroll'
 
@@ -9,6 +10,8 @@ interface PdfThumbnailPanelProps {
   pageCount: number
   currentPage: number
   open: boolean
+  enabled: boolean
+  onEnabledChange: (enabled: boolean) => void
   onNavigate: (page: number) => void
 }
 
@@ -24,6 +27,8 @@ export function PdfThumbnailPanel({
   pageCount,
   currentPage,
   open,
+  enabled,
+  onEnabledChange,
   onNavigate
 }: PdfThumbnailPanelProps): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -45,7 +50,7 @@ export function PdfThumbnailPanel({
   }, [])
 
   useEffect(() => {
-    if (!pdf || pageCount <= 0 || !scrollRef.current) return
+    if (!open || !enabled || !pdf || pageCount <= 0 || !scrollRef.current) return
 
     let cancelled = false
     const pending = new Set<number>()
@@ -94,7 +99,7 @@ export function PdfThumbnailPanel({
       observerRef.current?.disconnect()
       observerRef.current = null
     }
-  }, [pdf, pageCount, renderTick])
+  }, [open, enabled, pdf, pageCount, renderTick])
 
   useEffect(() => {
     return () => {
@@ -111,7 +116,7 @@ export function PdfThumbnailPanel({
       const active = root?.querySelector<HTMLElement>('.pdf-thumb-item.active')
       if (!root || !active) return
       if (!isThumbVisible(root, active)) {
-        active.scrollIntoView({ block: 'center', behavior: 'auto' })
+        scrollContainerToChild(root, active, root.clientHeight / 2 - active.clientHeight / 2)
       }
     }
 
@@ -131,14 +136,26 @@ export function PdfThumbnailPanel({
   }, [open, currentPage, pageCount])
 
   return (
-    <div className="pdf-side-panel-inner">
-      <div className="pdf-side-panel-header">
+    <div className="pdf-thumb-rail-inner">
+      <div className="pdf-thumb-rail-header">
         <LayoutGrid size={14} aria-hidden />
-        <span>缩略图</span>
+        <span className="pdf-thumb-rail-title">缩略图</span>
+        <label className="pdf-thumb-rail-switch" title="显示缩略图">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => {
+              e.stopPropagation()
+              onEnabledChange(e.target.checked)
+            }}
+          />
+          <span className="pdf-thumb-rail-switch-track" aria-hidden />
+        </label>
       </div>
       <div
         ref={scrollRef}
-        className="pdf-side-panel-body pdf-thumb-body"
+        className="pdf-thumb-body"
+        hidden={!open}
         onPointerDown={drag.onPointerDown}
         onPointerMove={drag.onPointerMove}
         onPointerUp={drag.onPointerUp}

@@ -1,7 +1,6 @@
-import { ZoomIn, ZoomOut } from 'lucide-react'
+import { LayoutGrid, ZoomIn, ZoomOut } from 'lucide-react'
 import * as pdfjsLib from 'pdfjs-dist'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { flushSync } from 'react-dom'
 import { toUint8Array } from '@shared/binary'
 import { IconButton } from '../../../components/IconButton'
 import { SelectionToolbar } from '../selection/SelectionToolbar'
@@ -12,6 +11,7 @@ import {
 import { useDomFind } from '../find/useDomFind'
 import { useViewerCommand } from '../find/useViewerCommand'
 import { selectAllInElement } from '../find/domFind'
+import { resetPageZoom } from '../../../utils/pageZoomReset'
 import { useWorkspaceStore } from '../../../stores/workspaceStore'
 import { useReadingProgress } from '../../../hooks/useReadingProgress'
 import type { PdfTextLayerHandle } from './pdfTextLayer'
@@ -28,14 +28,10 @@ import {
 import {
   applyWheelZoom,
   clampPdfScale,
-  computePagesRootTransformOrigin,
   computeZoomFocalScroll,
-  isZoomPreviewing,
   LAZY_ROOT_MARGIN,
   MAX_CONCURRENT_PAGE_RENDERS,
   normalizeWheelDelta,
-  previewScaleRatio,
-  SCALE_COMMIT_DEBOUNCE_MS,
   scrollContainerToChild,
   WHEEL_ZOOM_STEP
 } from './pdfViewerPerf'
@@ -57,6 +53,8 @@ interface PdfViewerProps {
 export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const shellRef = useRef<HTMLDivElement>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const thumbRailRef = useRef<HTMLElement>(null)
   const pagesRootRef = useRef<HTMLDivElement | null>(null)
   const pagesContentRef = useRef<HTMLDivElement | null>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -84,6 +82,8 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
   const edgeCommitRafRef = useRef<number | null>(null)
   const progressRestoredRef = useRef(false)
 
+  const SIDE_PANEL_SETTLE_MS = 80
+
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [scale, setScale] = useState(1.2)
@@ -94,12 +94,12 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
   const [currentPage, setCurrentPage] = useState(1)
   const [toolbarRect, setToolbarRect] = useState<DOMRect | null>(null)
   const [pendingText, setPendingText] = useState('')
-  const [zoomTransformOrigin, setZoomTransformOrigin] = useState('top center')
   const [outlineItems, setOutlineItems] = useState<PdfOutlineItem[]>([])
   const [outlineLoading, setOutlineLoading] = useState(false)
   const [outlineOpen, setOutlineOpen] = useState(false)
-  const [thumbOpen, setThumbOpen] = useState(false)
+  const [thumbOpen, setThumbOpen] = useState(true)
   const [pdfReady, setPdfReady] = useState(false)
+  const [isRescaling, setIsRescaling] = useState(false)
 
   const { saveProgress, loadProgress, isRestoringRef } = useReadingProgress(
     filePath,
@@ -111,13 +111,6 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
   currentPageRef.current = currentPage
   thumbOpenRef.current = thumbOpen
   outlineOpenRef.current = outlineOpen
-
-  const previewRatio = previewScaleRatio(displayScale, scale)
-  const sidePanelOpen = thumbOpen || outlineOpen
-
-  const bindPagesRoot = useCallback((el: HTMLDivElement | null) => {
-    pagesRootRef.current = el
-  }, [])
 
   const { sendToAI, setSelection } = useWorkspaceStore()
   const textSelectEnabled = isActive && !loading && pageCount > 0
@@ -233,47 +226,25 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
   const isActiveRef = useRef(isActive)
   isActiveRef.current = isActive
 
-  const clearPagesRootPreviewTransform = useCallback((): void => {
-    const root = pagesRootRef.current
-    if (!root) return
-    root.style.transform = ''
-    root.style.transformOrigin = ''
-  }, [])
-
-  /** 用 slot 尺寸 + 画布拉伸代替 CSS transform 预览，避免与侧栏 compositor 叠加 */
-  const applyPreviewLayoutScale = useCallback((targetDisplay: number, prevDisplay: number): void => {
-    const container = containerRef.current
-    if (!container) return
-    const committed = laidOutScaleRef.current ?? scaleRef.current
-    if (Math.abs(targetDisplay - committed) < 0.001) {
-      for (const slot of Array.from(pageSlotsRef.current.values())) {
-        resizeSlotToScale(slot, committed)
-        fitStaleCanvasToSlot(slot, committed, prevDisplay)
+  const waitForZoomSettled = useCallback((onReady: () => void): void => {
+    const deadline = Date.now() + 4000
+    const tick = (): void => {
+      if (Date.now() > deadline) {
+        onReady()
+        return
       }
-      return
+      if (
+        isRescalingRef.current ||
+        isZoomPreviewRef.current ||
+        scaleCommitTimerRef.current != null ||
+        Math.abs(displayScaleRef.current - scaleRef.current) > 0.001
+      ) {
+        requestAnimationFrame(tick)
+        return
+      }
+      onReady()
     }
-    const containerRect = container.getBoundingClientRect()
-    const focal = zoomFocalRef.current ?? {
-      clientX: containerRect.left + containerRect.width / 2,
-      clientY: containerRect.top + containerRect.height / 2
-    }
-    const scaleFactor = Math.abs(prevDisplay) > 0.001 ? targetDisplay / prevDisplay : 1
-    for (const slot of Array.from(pageSlotsRef.current.values())) {
-      resizeSlotToScale(slot, targetDisplay)
-      fitStaleCanvasToSlot(slot, targetDisplay, committed)
-    }
-    if (Math.abs(scaleFactor - 1) > 0.001) {
-      const nextScroll = computeZoomFocalScroll({
-        scrollLeft: container.scrollLeft,
-        scrollTop: container.scrollTop,
-        containerRect,
-        focalClientX: focal.clientX,
-        focalClientY: focal.clientY,
-        scaleFactor
-      })
-      container.scrollLeft = nextScroll.scrollLeft
-      container.scrollTop = nextScroll.scrollTop
-    }
+    requestAnimationFrame(tick)
   }, [])
 
   const flushZoomPreview = useCallback((): void => {
@@ -285,14 +256,13 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
     isZoomPreviewRef.current = false
     const committed = clampPdfScale(displayScaleRef.current)
     displayScaleRef.current = committed
-    clearPagesRootPreviewTransform()
     setDisplayScale(committed)
     if (Math.abs(committed - scaleRef.current) > 0.001) {
       setScale(committed)
     }
-  }, [clearPagesRootPreviewTransform])
+  }, [])
 
-  /** 侧栏 hover / 移向边缘时同步提交缩放，避免预览布局与侧栏动画叠加 */
+  /** 左侧目录展开前提交未完成缩放，避免与 width 动画叠加 */
   const commitZoomBeforeSidePanel = useCallback((): void => {
     const container = containerRef.current
     if (container) {
@@ -301,7 +271,6 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
         clientX: rect.left + rect.width / 2,
         clientY: rect.top + rect.height / 2
       }
-      container.classList.remove('pdf-zoom-preview')
     }
     if (scaleCommitTimerRef.current) {
       clearTimeout(scaleCommitTimerRef.current)
@@ -311,43 +280,54 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
     suppressFocalScrollRef.current = true
     const committed = clampPdfScale(displayScaleRef.current)
     displayScaleRef.current = committed
-    clearPagesRootPreviewTransform()
-    flushSync(() => {
-      setZoomTransformOrigin('top center')
-      setDisplayScale(committed)
-      if (Math.abs(committed - scaleRef.current) > 0.001) {
-        setScale(committed)
-      }
-    })
-    if (Math.abs(committed - scaleRef.current) <= 0.001) {
+    setDisplayScale(committed)
+    if (Math.abs(committed - scaleRef.current) > 0.001) {
+      setScale(committed)
+    } else {
       suppressFocalScrollRef.current = false
     }
-    void window.api.window.resetPageZoom()
-  }, [clearPagesRootPreviewTransform])
-
-  const openSidePanelWhenReady = useCallback((which: 'left' | 'right'): void => {
-    const tryOpen = (): void => {
-      if (isRescalingRef.current) {
-        requestAnimationFrame(tryOpen)
-        return
-      }
-      if (which === 'left') setOutlineOpen(true)
-      else setThumbOpen(true)
-    }
-    requestAnimationFrame(tryOpen)
+    resetPageZoom()
   }, [])
+
+  const openSidePanelSafely = useCallback(
+    (open: () => void): void => {
+      waitForZoomSettled(() => {
+        resetPageZoom()
+        globalThis.setTimeout(open, SIDE_PANEL_SETTLE_MS)
+      })
+    },
+    [waitForZoomSettled]
+  )
 
   const handleOutlineHoverStart = useCallback((): void => {
     outlineOpenRef.current = true
     commitZoomBeforeSidePanel()
-    openSidePanelWhenReady('left')
-  }, [commitZoomBeforeSidePanel, openSidePanelWhenReady])
+    openSidePanelSafely(() => setOutlineOpen(true))
+  }, [commitZoomBeforeSidePanel, openSidePanelSafely])
 
-  const handleThumbHoverStart = useCallback((): void => {
-    thumbOpenRef.current = true
-    commitZoomBeforeSidePanel()
-    openSidePanelWhenReady('right')
-  }, [commitZoomBeforeSidePanel, openSidePanelWhenReady])
+  const setThumbOpenState = useCallback((open: boolean): void => {
+    thumbOpenRef.current = open
+    setThumbOpen(open)
+  }, [])
+
+  const handleThumbOpenChange = useCallback(
+    (open: boolean): void => {
+      if (!open) {
+        thumbOpenRef.current = false
+        setThumbOpenState(false)
+        requestAnimationFrame(() => resetPageZoom())
+        return
+      }
+      thumbOpenRef.current = true
+      commitZoomBeforeSidePanel()
+      openSidePanelSafely(() => setThumbOpenState(true))
+    },
+    [commitZoomBeforeSidePanel, openSidePanelSafely, setThumbOpenState]
+  )
+
+  const toggleThumbPanel = useCallback((): void => {
+    handleThumbOpenChange(!thumbOpenRef.current)
+  }, [handleThumbOpenChange])
 
   const executeNavigateToPage = useCallback(
     (pageNo: number): void => {
@@ -415,79 +395,40 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
     [pageCount, commitZoomBeforeSidePanel, tryRunPendingNavigation]
   )
 
-  const resolveZoomOrigin = useCallback((clientX: number, clientY: number): string => {
-    const container = containerRef.current
-    const pagesRoot = pagesRootRef.current
-    if (!container || !pagesRoot) return 'top center'
-    const containerRect = container.getBoundingClientRect()
-    return computePagesRootTransformOrigin(
-      clientX,
-      clientY,
-      container.scrollLeft,
-      container.scrollTop,
-      containerRect,
-      pagesRoot.offsetLeft,
-      pagesRoot.offsetTop
-    )
-  }, [])
-
   const storeZoomFocal = useCallback((clientX: number, clientY: number): void => {
     zoomFocalRef.current = { clientX, clientY }
   }, [])
 
-  const scheduleScaleCommit = useCallback((nextDisplay: number, transformOrigin?: string): void => {
+  /** 滚轮缩放：立即提交 layout scale（无 debounce / 无 CSS transform 预览） */
+  const scheduleScaleCommit = useCallback((nextDisplay: number): void => {
     const clamped = clampPdfScale(nextDisplay)
-    if (scaleCommitTimerRef.current) clearTimeout(scaleCommitTimerRef.current)
-    scaleCommitTimerRef.current = null
-
-    const panelOpen = thumbOpenRef.current || outlineOpenRef.current
-    if (panelOpen) {
-      isZoomPreviewRef.current = false
-      suppressFocalScrollRef.current = true
-      displayScaleRef.current = clamped
-      clearPagesRootPreviewTransform()
-      setZoomTransformOrigin('top center')
-      setDisplayScale(clamped)
-      if (Math.abs(clamped - scaleRef.current) > 0.001) {
-        setScale(clamped)
-      } else {
-        suppressFocalScrollRef.current = false
-      }
-      return
-    }
-
-    const prevDisplay = displayScaleRef.current
-    if (transformOrigin) setZoomTransformOrigin(transformOrigin)
-    setDisplayScale(clamped)
-    displayScaleRef.current = clamped
-    const previewing = isZoomPreviewing(clamped, scaleRef.current)
-    isZoomPreviewRef.current = previewing
-    if (previewing) {
-      applyPreviewLayoutScale(clamped, prevDisplay)
-      renderWaitQueueRef.current = []
-    }
-    scaleCommitTimerRef.current = setTimeout(() => {
+    if (scaleCommitTimerRef.current) {
+      clearTimeout(scaleCommitTimerRef.current)
       scaleCommitTimerRef.current = null
-      isZoomPreviewRef.current = false
-      clearPagesRootPreviewTransform()
-      setScale(displayScaleRef.current)
-    }, SCALE_COMMIT_DEBOUNCE_MS)
-  }, [clearPagesRootPreviewTransform, applyPreviewLayoutScale])
+    }
+    isZoomPreviewRef.current = false
+    displayScaleRef.current = clamped
+    setDisplayScale(clamped)
+    if (Math.abs(clamped - scaleRef.current) <= 0.001) return
+
+    renderWaitQueueRef.current = []
+    if (thumbOpenRef.current || outlineOpenRef.current) {
+      suppressFocalScrollRef.current = true
+    }
+    setScale(clamped)
+    requestAnimationFrame(() => resetPageZoom())
+  }, [])
 
   const adjustZoom = useCallback(
     (delta: number): void => {
       const container = containerRef.current
-      if (!container) {
-        scheduleScaleCommit(displayScaleRef.current + delta)
-        return
+      if (container) {
+        const rect = container.getBoundingClientRect()
+        storeZoomFocal(rect.left + rect.width / 2, rect.top + rect.height / 2)
       }
-      const rect = container.getBoundingClientRect()
-      const clientX = rect.left + rect.width / 2
-      const clientY = rect.top + rect.height / 2
-      storeZoomFocal(clientX, clientY)
-      scheduleScaleCommit(displayScaleRef.current + delta, resolveZoomOrigin(clientX, clientY))
+      scheduleScaleCommit(displayScaleRef.current + delta)
     },
-    [scheduleScaleCommit, resolveZoomOrigin, storeZoomFocal]
+    [scheduleScaleCommit, storeZoomFocal]
   )
 
   useEffect(() => {
@@ -547,7 +488,7 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
       setOutlineItems([])
       setOutlineLoading(false)
       setOutlineOpen(false)
-      setThumbOpen(false)
+      setThumbOpen(true)
       laidOutScaleRef.current = null
       bumpRenderGeneration()
       clearPageSlots()
@@ -568,7 +509,6 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
             clearTimeout(scaleCommitTimerRef.current)
             scaleCommitTimerRef.current = null
           }
-          setZoomTransformOrigin('top center')
         }
         loadingTask = pdfjsLib.getDocument({ data: toUint8Array(raw) })
         const pdf = await loadingTask.promise
@@ -712,12 +652,11 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
     scaleRef.current = targetScale
     setDisplayScale(targetScale)
     displayScaleRef.current = targetScale
-    clearPagesRootPreviewTransform()
     laidOutScaleRef.current = targetScale
     setRenderedCount(0)
 
     isRescalingRef.current = true
-    container.classList.add('pdf-rescaling')
+    setIsRescaling(true)
 
     requestAnimationFrame(() => {
       if (cancelled) return
@@ -741,17 +680,18 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
       }
       suppressFocalScrollRef.current = false
       bootstrapVisiblePagesRef.current()
-      container.classList.remove('pdf-rescaling')
       isRescalingRef.current = false
+      setIsRescaling(false)
+      resetPageZoom()
       tryRunPendingNavigationRef.current()
     })
 
     return () => {
       cancelled = true
       isRescalingRef.current = false
-      container.classList.remove('pdf-rescaling')
+      setIsRescaling(false)
     }
-  }, [scale, layoutReady, bumpRenderGeneration, clearPagesRootPreviewTransform])
+  }, [scale, layoutReady, bumpRenderGeneration])
 
   useEffect(() => {
     const container = containerRef.current
@@ -780,10 +720,10 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
     flushZoomPreview()
   }, [layoutReady, flushZoomPreview])
 
-  /** 缩放预览 / 重绘期间移向左右边缘时提前提交，避免侧栏动画与预览布局叠加 */
+  /** 缩放重绘期间移向左侧边缘时提前提交，供目录栏展开 */
   useEffect(() => {
-    const shell = shellRef.current
-    if (!shell || !layoutReady) return
+    const host = bodyRef.current
+    if (!host || !layoutReady) return
 
     const onMove = (e: MouseEvent): void => {
       const needsCommit =
@@ -796,16 +736,15 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
       if (edgeCommitRafRef.current != null) return
       edgeCommitRafRef.current = requestAnimationFrame(() => {
         edgeCommitRafRef.current = null
-        const rect = shell.getBoundingClientRect()
-        const nearRight = x >= rect.right - 56
+        const rect = host.getBoundingClientRect()
         const nearLeft = x <= rect.left + 48
-        if (nearRight || nearLeft) commitZoomBeforeSidePanel()
+        if (nearLeft) commitZoomBeforeSidePanel()
       })
     }
 
-    shell.addEventListener('mousemove', onMove, { passive: true })
+    host.addEventListener('mousemove', onMove, { passive: true })
     return () => {
-      shell.removeEventListener('mousemove', onMove)
+      host.removeEventListener('mousemove', onMove)
       if (edgeCommitRafRef.current != null) cancelAnimationFrame(edgeCommitRafRef.current)
     }
   }, [layoutReady, commitZoomBeforeSidePanel])
@@ -864,8 +803,9 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
 
   useEffect(() => {
     const handleWheel = (e: WheelEvent): void => {
-      if (!e.ctrlKey) return
+      if (!e.ctrlKey && !e.metaKey) return
       e.preventDefault()
+      e.stopPropagation()
 
       wheelAccumRef.current.deltaY += e.deltaY
       wheelAccumRef.current.deltaMode = e.deltaMode
@@ -885,19 +825,32 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
         if (Math.abs(next - displayScaleRef.current) < 0.0001) return
 
         storeZoomFocal(acc.clientX, acc.clientY)
-        const origin = resolveZoomOrigin(acc.clientX, acc.clientY)
-        scheduleScaleCommit(next, origin)
-        void window.api.window.resetPageZoom()
+        scheduleScaleCommit(next)
       })
     }
-    const el = shellRef.current ?? containerRef.current
-    el?.addEventListener('wheel', handleWheel, { passive: false })
+
+    const el = bodyRef.current ?? shellRef.current
+    if (!el || !layoutReady) return
+    el.addEventListener('wheel', handleWheel, { passive: false })
     return () => {
-      el?.removeEventListener('wheel', handleWheel)
-      if (scaleCommitTimerRef.current != null) clearTimeout(scaleCommitTimerRef.current)
+      el.removeEventListener('wheel', handleWheel)
       if (wheelRafRef.current != null) cancelAnimationFrame(wheelRafRef.current)
     }
-  }, [scheduleScaleCommit, resolveZoomOrigin, storeZoomFocal, layoutReady])
+  }, [scheduleScaleCommit, storeZoomFocal, layoutReady])
+
+  useEffect(() => {
+    const rail = thumbRailRef.current
+    if (!rail || !thumbOpen) return
+
+    const onWheel = (e: WheelEvent): void => {
+      if (!e.ctrlKey && !e.metaKey) return
+      e.preventDefault()
+      e.stopPropagation()
+    }
+
+    rail.addEventListener('wheel', onWheel, { passive: false, capture: true })
+    return () => rail.removeEventListener('wheel', onWheel, { capture: true })
+  }, [thumbOpen])
 
   const closeToolbar = useCallback((): void => {
     setToolbarRect(null)
@@ -907,7 +860,6 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
 
   const showViewer = !loading && !error && pageCount > 0 && layoutReady
   const showLoading = loading || (pageCount > 0 && !layoutReady)
-  const isPreviewingZoom = previewRatio !== 1 && !sidePanelOpen
 
   return (
     <div ref={wrapperRef} className="pdf-wrapper">
@@ -915,14 +867,20 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
         <IconButton icon={ZoomOut} label="缩小" onClick={() => adjustZoom(-WHEEL_ZOOM_STEP)} />
         <span>{Math.round(displayScale * 100)}%</span>
         <IconButton icon={ZoomIn} label="放大" onClick={() => adjustZoom(WHEEL_ZOOM_STEP)} />
+        <IconButton
+          icon={LayoutGrid}
+          label="缩略图"
+          active={thumbOpen}
+          onClick={toggleThumbPanel}
+        />
         <span style={{ marginLeft: 16 }}>
           第 {currentPage} / {pageCount} 页
         </span>
-        {pageCount > 0 && renderedCount < pageCount && !isPreviewingZoom && (
+        {pageCount > 0 && renderedCount < pageCount && !isRescaling && (
           <span className="pdf-render-progress">高清渲染 {renderedCount}/{pageCount}</span>
         )}
-        {isPreviewingZoom && (
-          <span className="pdf-render-progress">缩放预览</span>
+        {isRescaling && (
+          <span className="pdf-render-progress">缩放重绘中…</span>
         )}
       </div>
 
@@ -930,46 +888,49 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
       {error && <div className="error-state">{error}</div>}
 
       <div
-        ref={shellRef}
-        className="pdf-viewer-shell"
+        ref={bodyRef}
+        className="pdf-body"
         style={{ display: showViewer ? 'flex' : 'none' }}
       >
-        <PdfSideHover
-          side="left"
-          open={outlineOpen}
-          setOpen={setOutlineOpen}
-          onHoverStart={handleOutlineHoverStart}
-          label="目录"
-        >
-          <PdfOutlinePanel
-            items={outlineItems}
-            loading={outlineLoading}
-            currentPage={currentPage}
-            onNavigate={scrollToPage}
-          />
-        </PdfSideHover>
+        <div ref={shellRef} className="pdf-viewer-shell">
+          <PdfSideHover
+            side="left"
+            open={outlineOpen}
+            setOpen={setOutlineOpen}
+            onHoverStart={handleOutlineHoverStart}
+            label="目录"
+          >
+            <PdfOutlinePanel
+              items={outlineItems}
+              loading={outlineLoading}
+              currentPage={currentPage}
+              onNavigate={scrollToPage}
+            />
+          </PdfSideHover>
 
-        <PdfSideHover
-          side="right"
-          open={thumbOpen}
-          setOpen={setThumbOpen}
-          onHoverStart={handleThumbHoverStart}
-          label="缩略图"
+          <div ref={containerRef} className={`pdf-viewer${isRescaling ? ' pdf-rescaling' : ''}`}>
+            <div ref={pagesRootRef} className="pdf-pages-root">
+              <div ref={pagesContentRef} className="pdf-pages-content" />
+            </div>
+          </div>
+        </div>
+
+        <aside
+          ref={thumbRailRef}
+          className={`pdf-thumb-rail-overlay${thumbOpen ? '' : ' pdf-thumb-rail-hidden'}`}
+          aria-label="缩略图"
+          aria-hidden={!thumbOpen}
         >
           <PdfThumbnailPanel
             pdf={pdfReady ? pdfDocRef.current : null}
             pageCount={pageCount}
             currentPage={currentPage}
             open={thumbOpen}
+            enabled={thumbOpen}
+            onEnabledChange={handleThumbOpenChange}
             onNavigate={scrollToPage}
           />
-        </PdfSideHover>
-
-        <div ref={containerRef} className="pdf-viewer">
-          <div ref={bindPagesRoot} className="pdf-pages-root">
-            <div ref={pagesContentRef} className="pdf-pages-content" />
-          </div>
-        </div>
+        </aside>
       </div>
 
       {toolbarRect && (

@@ -1487,20 +1487,35 @@ mark.hanstudy-find-match-active {
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  position: relative;
+  --pdf-thumb-panel-width: 126px;
+}
+
+.pdf-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
 }
 
 .pdf-viewer-shell {
   position: relative;
   flex: 1;
   min-height: 0;
+  min-width: 0;
+  width: 100%;
   display: flex;
-  isolation: isolate;
+  flex-direction: row;
+  align-items: stretch;
 }
 
 .pdf-viewer {
   position: relative;
   flex: 1;
   min-width: 0;
+  width: 100%;
   height: 100%;
   overflow-y: auto;
   background: #525659;
@@ -1511,32 +1526,134 @@ mark.hanstudy-find-match-active {
   gap: 16px;
 }
 
-.pdf-side-hover {
+/* 绝对定位于 pdf-body 右缘（原生滚动条外侧），不参与 flex 宽度计算 */
+.pdf-thumb-rail-overlay {
   position: absolute;
   top: 0;
+  right: 0;
   bottom: 0;
-  z-index: 30;
+  z-index: 500;
+  width: var(--pdf-thumb-panel-width, 126px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-primary);
+  border-left: 1px solid var(--border);
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+  -webkit-app-region: no-drag;
+}
+
+.pdf-thumb-rail-hidden {
+  visibility: hidden;
   pointer-events: none;
-  overflow: visible;
+  width: 0;
+  border: none;
+  box-shadow: none;
+  overflow: hidden;
+}
+
+.pdf-thumb-rail-inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.pdf-thumb-rail-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  -webkit-app-region: no-drag;
+}
+
+.pdf-thumb-rail-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.pdf-thumb-rail-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.pdf-thumb-rail-switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.pdf-thumb-rail-switch-track {
+  position: relative;
+  display: block;
+  width: 32px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  transition: background 0.15s ease;
+}
+
+.pdf-thumb-rail-switch-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.pdf-thumb-rail-switch input:checked + .pdf-thumb-rail-switch-track {
+  background: color-mix(in srgb, var(--accent) 28%, var(--bg-primary));
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+.pdf-thumb-rail-switch input:checked + .pdf-thumb-rail-switch-track::after {
+  transform: translateX(14px);
+  background: var(--accent);
+}
+
+.pdf-viewer-shell:has(.pdf-rescaling) .pdf-side-hover--left {
+  pointer-events: none;
+}
+
+.pdf-side-hover {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  overflow: hidden;
 }
 
 .pdf-side-hover--left {
-  left: 0;
+  flex-shrink: 0;
+  flex-direction: row;
+  width: 22px;
+  order: -1;
+}
+
+.pdf-side-hover--left.open {
   width: 272px;
 }
 
-.pdf-side-hover--right {
-  right: 0;
-  width: 148px;
-}
-
 .pdf-side-trigger {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 18px;
-  pointer-events: auto;
-  z-index: 2;
+  flex-shrink: 0;
+  width: var(--pdf-side-trigger-width, 22px);
+  height: 100%;
+  padding: 0;
+  border: none;
   background: linear-gradient(
     to right,
     rgba(0, 0, 0, 0.18),
@@ -1545,14 +1662,7 @@ mark.hanstudy-find-match-active {
   cursor: pointer;
   opacity: 0.55;
   transition: opacity 0.15s;
-}
-
-.pdf-side-hover--left .pdf-side-trigger {
-  left: 0;
-}
-
-.pdf-side-hover--right .pdf-side-trigger {
-  right: 0;
+  touch-action: manipulation;
 }
 
 .pdf-side-hover--right .pdf-side-trigger {
@@ -1569,34 +1679,13 @@ mark.hanstudy-find-match-active {
 }
 
 .pdf-side-panel {
-  position: absolute;
-  top: 0;
-  bottom: 0;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
-  pointer-events: auto;
-  max-width: 0;
-  transition: max-width 0.15s ease;
   background: var(--bg-primary);
   border: 1px solid var(--border);
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.22);
-}
-
-.pdf-side-hover--left .pdf-side-panel {
-  left: 18px;
-  width: 254px;
-}
-
-.pdf-side-hover--left.open .pdf-side-panel {
-  max-width: 254px;
-}
-
-.pdf-side-hover--right .pdf-side-panel {
-  right: 18px;
-  width: 130px;
-}
-
-.pdf-side-hover--right.open .pdf-side-panel {
-  max-width: 130px;
+  transition: opacity 0.12s ease;
 }
 
 .pdf-side-panel--left {
@@ -1606,13 +1695,20 @@ mark.hanstudy-find-match-active {
 
 .pdf-side-panel--right {
   border-right: none;
-  border-radius: 8px 0 0 8px;
+}
+
+.pdf-side-hover--right.open .pdf-side-panel--right {
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .pdf-side-panel--collapsed {
+  flex: 0 0 0 !important;
+  width: 0 !important;
+  min-width: 0 !important;
   visibility: hidden;
   pointer-events: none;
-  max-width: 0 !important;
+  opacity: 0;
   border: none;
   box-shadow: none;
 }
@@ -1704,13 +1800,16 @@ mark.hanstudy-find-match-active {
 }
 
 .pdf-thumb-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 10px;
   padding: 10px 8px 14px;
   cursor: grab;
-  touch-action: none;
+  touch-action: pan-y;
   user-select: none;
 }
 
@@ -2080,7 +2179,10 @@ mark.hanstudy-find-match-active {
   flex: 1;
   min-height: 0;
   display: flex;
+  flex-direction: row;
+  align-items: stretch;
   overflow: hidden;
+  --pdf-scrollbar-gutter: 0px;
 }
 
 .text-doc-content {
@@ -2092,6 +2194,30 @@ mark.hanstudy-find-match-active {
   overflow: hidden;
   position: relative;
   z-index: 1;
+}
+
+.text-doc-shell .pdf-side-hover--right {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: var(--pdf-scrollbar-gutter);
+  z-index: 50;
+  width: var(--pdf-side-trigger-width, 22px);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.text-doc-shell .pdf-side-hover--right.open {
+  width: 150px;
+}
+
+.text-doc-shell .pdf-side-hover--right.open .pdf-side-trigger {
+  display: none;
+}
+
+.text-doc-shell .pdf-side-hover--right .pdf-side-trigger,
+.text-doc-shell .pdf-side-hover--right.open .pdf-side-panel:not(.pdf-side-panel--collapsed) {
+  pointer-events: auto;
 }
 
 .text-doc-content .markdown-preview-host,
@@ -2243,18 +2369,6 @@ mark.hanstudy-find-match-active {
 .txt-chapter-reader-body .txt-block:first-child.txt-block--subtitle,
 .txt-chapter-reader-body .txt-block:first-child.txt-block--heading {
   margin-top: 0;
-}
-
-.text-doc-shell .pdf-side-hover--right {
-  width: 172px;
-}
-
-.text-doc-shell .pdf-side-hover--right .pdf-side-panel {
-  width: 154px;
-}
-
-.text-doc-shell .pdf-side-hover--right.open .pdf-side-panel {
-  max-width: 154px;
 }
 
 .txt-chapter-thumb-panel .pdf-side-panel-header {
@@ -3412,27 +3526,6 @@ u.annotation-underline {
   align-items: center;
   gap: 16px;
   width: 100%;
-}
-
-.pdf-viewer.pdf-zoom-preview .pdf-pages-root {
-  will-change: transform;
-  backface-visibility: hidden;
-  -webkit-font-smoothing: subpixel-antialiased;
-  /* 快速缩放时以 CSS 拉伸旧画布，轻微模糊提示仍为预览 */
-  filter: blur(0.5px);
-  transition: filter 0.12s ease-out;
-}
-
-.pdf-viewer.pdf-rescaling .pdf-pages-root {
-  filter: none;
-}
-
-.pdf-viewer.pdf-rescaling {
-  pointer-events: none;
-}
-
-.pdf-viewer.pdf-rescaling .pdf-canvas-wrap {
-  will-change: transform;
 }
 
 .pdf-render-progress {
