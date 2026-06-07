@@ -3,7 +3,9 @@ import mammoth from 'mammoth'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useBindAnnotationSurface } from '../../../features/reader/annotations/useBindAnnotationSurface'
 import { resolveMarkupColor } from '../annotations/annotationMarkup'
-import { applyDomAnnotation, refreshTextMarkup, blockViewerContextMenu, scrollToAnnotationText } from '../annotations/textUtils'
+import { resolveDomMarkupRects } from '../annotations/markupOverlayUtils'
+import { blockViewerContextMenu, scrollToAnnotationText } from '../annotations/textUtils'
+import { useRegisterMarkupResolver } from '../annotations/useRegisterMarkupResolver'
 import { NoteInputModal, SelectionToolbar } from '../../../features/reader/annotations/SelectionToolbar'
 import { useAnnotations } from '../../../features/reader/annotations/useAnnotations'
 import { useDomTextSelection } from '../../../features/reader/annotations/useDomTextSelection'
@@ -12,6 +14,7 @@ import { useDomAnnotationToolUndo } from '../../../features/reader/annotations/u
 import { useDomFind } from '../../../features/reader/find/useDomFind'
 import { useViewerCommand } from '../../../features/reader/find/useViewerCommand'
 import { selectAllInElement } from '../../../features/reader/find/domFind'
+import type { Annotation } from '../../../types/global.d'
 import { useWorkspaceStore } from '../../../stores/workspaceStore'
 
 interface DocxViewerProps {
@@ -89,10 +92,16 @@ export function DocxViewer({ filePath, isActive = true }: DocxViewerProps): JSX.
     el.innerHTML = html
   }, [html])
 
-  useEffect(() => {
-    if (!contentRef.current) return
-    refreshTextMarkup(contentRef.current, annotations)
-  }, [html, annotations])
+  const resolveMarkupRects = useCallback(
+    (ann: Annotation) => {
+      const surface = surfaceRef.current
+      const root = contentRef.current
+      if (!surface || !root) return []
+      return resolveDomMarkupRects(ann, surface, root)
+    },
+    [html]
+  )
+  useRegisterMarkupResolver(resolveMarkupRects, isActive && !loading)
 
   const closeToolbar = (): void => {
     setToolbarRect(null)
@@ -109,9 +118,6 @@ export function DocxViewer({ filePath, isActive = true }: DocxViewerProps): JSX.
       const text = override?.text ?? pendingText
       if (!text) return
       const color = resolveMarkupColor(type === 'note' ? 'note' : type)
-      if (contentRef.current && (type === 'highlight' || type === 'underline')) {
-        applyDomAnnotation(contentRef.current, type, text, override?.domRange, color)
-      }
       await create({
         type,
         color,

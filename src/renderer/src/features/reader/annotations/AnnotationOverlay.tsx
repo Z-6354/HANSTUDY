@@ -1,6 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useWorkspaceStore } from '../../../stores/workspaceStore'
 import type { Annotation, DrawShape, ShapePoint } from '../../../types/global.d'
+import { resolveStoredMarkupColor } from './annotationMarkup'
+import {
+  hitTestMarkupOverlay,
+  resolveAllMarkupRects,
+  resolveDefaultMarkupRects,
+  type ContentRect,
+  type MarkupRectResolver
+} from './markupOverlayUtils'
 import {
   ANNOTATION_SURFACE_RESIZE_EVENT,
   clientToContentPoint,
@@ -12,13 +20,14 @@ import {
   shapeToPixels
 } from './shapeUtils'
 import { annotationCreateInput, findLastAnnotationByType, toolUsesRightClickUndo } from './annotationToolUtils'
-import { hitTestMarkupAnnotation } from './textUtils'
 import { useAnnotations } from './useAnnotations'
 
 interface AnnotationOverlayProps {
   docPath: string
   isActive: boolean
   surface: HTMLElement
+  getMarkupResolver: () => MarkupRectResolver | null
+  markupLayoutKey: number
 }
 
 interface DraftPen {
@@ -98,12 +107,54 @@ function renderAnnotation(
   return null
 }
 
+function renderMarkupRects(
+  annotation: Annotation,
+  rects: ContentRect[],
+  focused: boolean
+): JSX.Element[] {
+  const color = resolveStoredMarkupColor(annotation)
+  const opacity = focused ? 0.95 : 0.85
+
+  return rects.map((r, index) => {
+    if (annotation.type === 'underline') {
+      const y = r.y + r.height - 2
+      return (
+        <rect
+          key={`${annotation.id}-${index}`}
+          x={r.x}
+          y={y}
+          width={r.width}
+          height={2}
+          fill={color}
+          opacity={opacity}
+          className="annotation-markup-underline"
+        />
+      )
+    }
+    return (
+      <rect
+        key={`${annotation.id}-${index}`}
+        x={r.x}
+        y={r.y}
+        width={r.width}
+        height={r.height}
+        fill={color}
+        opacity={opacity}
+        className="annotation-markup-highlight"
+      />
+    )
+  })
+}
+
 export function AnnotationOverlay({
   docPath,
   isActive,
-  surface
+  surface,
+  getMarkupResolver,
+  markupLayoutKey
 }: AnnotationOverlayProps): JSX.Element {
   const [size, setSize] = useState(() => getContentSize(surface))
+  const [layoutTick, setLayoutTick] = useState(0)
   const [draft, setDraft] = useState<Draft | null>(null)
   const drawingRef = useRef(false)
   const draftRef = useRef<Draft | null>(null)
@@ -145,7 +196,21 @@ export function AnnotationOverlay({
 
   const updateSize = useCallback(() => {
     setSize(getContentSize(surface))
+    setLayoutTick((tick) => tick + 1)
   }, [surface])
+
+  const resolveMarkupRects = useCallback(
+    (annotation: Annotation): ContentRect[] => {
+      const resolver = getMarkupResolver()
+      return resolver ? resolver(annotation) : resolveDefaultMarkupRects(annotation, surface)
+    },
+    [getMarkupResolver, surface, markupLayoutKey, layoutTick]
+  )
+
+  const markupRectMap = useMemo(
+    () => resolveAllMarkupRects(markupAnnotations, surface, resolveMarkupRects),
+    [markupAnnotations, surface, resolveMarkupRects, markupLayoutKey, layoutTick]
+  )
 
   useEffect(() => {
     if (isActive) updateSize()
@@ -300,11 +365,12 @@ export function AnnotationOverlay({
           [...drawAnnotationsRef.current]
             .reverse()
             .find((a) => hitTestAnnotation(a, e.clientX, e.clientY, surface)) ??
-          hitTestMarkupAnnotation(
+          hitTestMarkupOverlay(
             markupAnnotationsRef.current,
             e.clientX,
             e.clientY,
-            surface
+            surface,
+            resolveMarkupRects
           )
         if (hit) {
           eraserUndoStackRef.current.push(hit)
@@ -377,7 +443,7 @@ export function AnnotationOverlay({
       surface.removeEventListener('contextmenu', onContextMenu)
       surface.removeEventListener('selectstart', onSelectStart)
     }
-  }, [interactive, applyDraft, remove, create, surface])
+  }, [interactive, applyDraft, remove, create, surface, resolveMarkupRects])
 
   useEffect(() => {
     if (!interactive) return
@@ -455,6 +521,11 @@ export function AnnotationOverlay({
       viewBox={`0 0 ${size.width} ${size.height}`}
       aria-hidden
     >
+      <g className="annotation-markup-layer" pointerEvents="none">
+        {markupAnnotations.flatMap((a) =>
+          renderMarkupRects(a, markupRectMap.get(a.id) ?? [], a.id === focusAnnotationId)
+        )}
+      </g>
       {drawAnnotations.map((a) =>
         renderAnnotation(a, size.width, size.height, a.id === focusAnnotationId)
       )}

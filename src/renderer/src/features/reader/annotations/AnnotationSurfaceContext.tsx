@@ -1,10 +1,14 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import { createPortal } from 'react-dom'
 import { AnnotationOverlay } from './AnnotationOverlay'
+import type { MarkupRectResolver } from './markupOverlayUtils'
 
 interface AnnotationSurfaceContextValue {
   registerSurface: (el: HTMLElement | null) => void
+  registerMarkupResolver: (fn: MarkupRectResolver | null) => void
+  getMarkupResolver: () => MarkupRectResolver | null
+  markupLayoutKey: number
   refreshPortal: () => void
 }
 
@@ -38,16 +42,35 @@ export function AnnotatedViewerShell({
 }: AnnotatedViewerShellProps): JSX.Element {
   const [surface, setSurface] = useState<HTMLElement | null>(null)
   const [portalKey, setPortalKey] = useState(0)
+  const [markupLayoutKey, setMarkupLayoutKey] = useState(0)
+  const markupResolverRef = useRef<MarkupRectResolver | null>(null)
 
   const registerSurface = useCallback((el: HTMLElement | null) => {
     flushSync(() => setSurface(el))
   }, [])
 
-  const refreshPortal = useCallback(() => {
-    setPortalKey((key) => key + 1)
+  const registerMarkupResolver = useCallback((fn: MarkupRectResolver | null) => {
+    markupResolverRef.current = fn
+    setMarkupLayoutKey((key) => key + 1)
   }, [])
 
-  const value = useMemo(() => ({ registerSurface, refreshPortal }), [registerSurface, refreshPortal])
+  const getMarkupResolver = useCallback(() => markupResolverRef.current, [])
+
+  const refreshPortal = useCallback(() => {
+    setPortalKey((key) => key + 1)
+    setMarkupLayoutKey((key) => key + 1)
+  }, [])
+
+  const value = useMemo(
+    () => ({
+      registerSurface,
+      registerMarkupResolver,
+      getMarkupResolver,
+      markupLayoutKey,
+      refreshPortal
+    }),
+    [registerSurface, registerMarkupResolver, getMarkupResolver, markupLayoutKey, refreshPortal]
+  )
 
   return (
     <AnnotationSurfaceContext.Provider value={value}>
@@ -60,6 +83,8 @@ export function AnnotatedViewerShell({
               docPath={docPath}
               isActive={isActive}
               surface={surface}
+              getMarkupResolver={getMarkupResolver}
+              markupLayoutKey={markupLayoutKey}
             />,
             surface
           )}

@@ -7,7 +7,9 @@ import { useAnnotationPortalRefresh } from '../annotations/AnnotationSurfaceCont
 import { useBindAnnotationSurface } from '../annotations/useBindAnnotationSurface'
 import { NoteInputModal, SelectionToolbar } from '../annotations/SelectionToolbar'
 import { resolveMarkupColor } from '../annotations/annotationMarkup'
-import { applyDomAnnotation, refreshTextMarkup, scrollToAnnotationText } from '../annotations/textUtils'
+import { domRangeToContentRects } from '../annotations/markupOverlayUtils'
+import { findTextRangeInRoot, scrollToAnnotationText } from '../annotations/textUtils'
+import { useRegisterMarkupResolver } from '../annotations/useRegisterMarkupResolver'
 import { useAnnotations } from '../annotations/useAnnotations'
 import { useDomSelectionEffect } from '../annotations/useDomSelectionEffect'
 import { useDomTextSelection } from '../annotations/useDomTextSelection'
@@ -16,6 +18,7 @@ import { useDomAnnotationToolUndo } from '../annotations/useAnnotationToolUndo'
 import { useDomFind } from '../find/useDomFind'
 import { useViewerCommand } from '../find/useViewerCommand'
 import { selectAllInElement } from '../find/domFind'
+import type { Annotation } from '../../../types/global.d'
 import { useWorkspaceStore } from '../../../stores/workspaceStore'
 import { useReadingProgress } from '../../../hooks/useReadingProgress'
 import type { PdfTextLayerHandle } from './pdfTextLayer'
@@ -150,8 +153,23 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
       ),
     [annotations]
   )
-  const textAnnotationsRef = useRef(textAnnotations)
-  textAnnotationsRef.current = textAnnotations
+  const resolveMarkupRects = useCallback(
+    (ann: Annotation) => {
+      const surface = pagesRootRef.current
+      if (!surface || !ann.selectedText?.trim()) return []
+      const rects: ReturnType<typeof domRangeToContentRects> = []
+      pageSlotsRef.current.forEach((slot) => {
+        if (!slot.rendered) return
+        const range = findTextRangeInRoot(slot.wrap, ann.selectedText!)
+        if (range && !range.collapsed) {
+          rects.push(...domRangeToContentRects(range, surface))
+        }
+      })
+      return rects
+    },
+    [layoutReady, renderedCount]
+  )
+  useRegisterMarkupResolver(resolveMarkupRects, isActive && !loading && layoutReady)
 
   const drawTool =
     annotationTool === 'pen' || annotationTool === 'rect' || annotationTool === 'eraser'
@@ -209,7 +227,8 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
       textLayersRef.current.push(textHandle)
       setRenderedCount((n) => n + 1)
 
-      refreshTextMarkup(slot.wrap, textAnnotationsRef.current)
+      pagesRootRef.current?.dispatchEvent(new Event(ANNOTATION_SURFACE_RESIZE_EVENT))
+      refreshAnnotationPortal()
     } catch (err) {
       if (generation !== renderGenerationRef.current) return
       if (err instanceof Error && err.message === 'render cancelled') return
@@ -219,7 +238,7 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
         slot.rendering = false
       }
     }
-  }, [])
+  }, [refreshAnnotationPortal])
 
   const pumpRenderQueue = useCallback((): void => {
     if (isZoomPreviewRef.current) return
@@ -644,11 +663,8 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
 
   useEffect(() => {
     if (!layoutReady) return
-    pageSlotsRef.current.forEach((slot) => {
-      if (!slot.rendered) return
-      refreshTextMarkup(slot.wrap, textAnnotations)
-    })
-  }, [textAnnotations, layoutReady])
+    notifyAnnotationLayout()
+  }, [textAnnotations, layoutReady, notifyAnnotationLayout])
 
   useEffect(() => {
     const container = containerRef.current
@@ -821,22 +837,7 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
         return
       }
 
-      const domRange = override?.domRange ?? null
       const color = resolveMarkupColor(type)
-      const targetRoot = domRange
-        ? (domRange.commonAncestorContainer as Node).nodeType === Node.ELEMENT_NODE
-          ? ((domRange.commonAncestorContainer as Element).closest('.pdf-page-wrap') as
-              | HTMLElement
-              | null)
-          : (domRange.commonAncestorContainer.parentElement?.closest('.pdf-page-wrap') as
-              | HTMLElement
-              | null)
-        : null
-      if (targetRoot) {
-        applyDomAnnotation(targetRoot, type, text, domRange, color)
-      } else if (containerRef.current) {
-        applyDomAnnotation(containerRef.current, type, text, domRange, color)
-      }
       await create({
         type,
         color,

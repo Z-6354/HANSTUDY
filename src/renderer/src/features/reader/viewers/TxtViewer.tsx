@@ -2,13 +2,15 @@ import Editor from '@monaco-editor/react'
 import type * as MonacoApi from 'monaco-editor'
 import type { editor as MonacoEditor } from 'monaco-editor'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { resolveMarkupColor, resolveStoredMarkupColor } from '../../../features/reader/annotations/annotationMarkup'
+import { resolveMarkupColor } from '../../../features/reader/annotations/annotationMarkup'
+import { monacoRangeToContentRects } from '../../../features/reader/annotations/markupOverlayUtils'
 import { useBindAnnotationSurface } from '../../../features/reader/annotations/useBindAnnotationSurface'
+import { useRegisterMarkupResolver } from '../../../features/reader/annotations/useRegisterMarkupResolver'
 import { NoteInputModal, SelectionToolbar } from '../../../features/reader/annotations/SelectionToolbar'
 import { useAnnotations } from '../../../features/reader/annotations/useAnnotations'
 import { useMonacoAnnotationToolUndo } from '../../../features/reader/annotations/useAnnotationToolUndo'
 import { useViewerCommand } from '../../../features/reader/find/useViewerCommand'
-import type { TextRange } from '../../../types/global.d'
+import type { Annotation, TextRange } from '../../../types/global.d'
 import { useWorkspaceStore } from '../../../stores/workspaceStore'
 
 interface TxtViewerProps {
@@ -28,7 +30,7 @@ export function TxtViewer({ filePath, isActive = true }: TxtViewerProps): JSX.El
 
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null)
   const monacoRef = useRef<typeof MonacoApi | null>(null)
-  const decorationIdsRef = useRef<string[]>([])
+  const surfaceRef = useRef<HTMLElement | null>(null)
   const monacoApplyingRef = useRef(false)
   const bindAnnotationSurface = useBindAnnotationSurface()
 
@@ -64,36 +66,17 @@ export function TxtViewer({ filePath, isActive = true }: TxtViewerProps): JSX.El
     }
   }, [filePath])
 
-  const applyDecorations = useCallback(() => {
-    const editor = editorRef.current
-    const monaco = monacoRef.current
-    if (!editor || !monaco) return
-
-    const decos = annotations
-      .filter((a) => a.range && (a.type === 'highlight' || a.type === 'underline'))
-      .map((a) => ({
-        range: new monaco.Range(
-          a.range!.startLine,
-          a.range!.startColumn,
-          a.range!.endLine,
-          a.range!.endColumn
-        ),
-        options: {
-          inlineClassName:
-            a.type === 'highlight' ? 'annotation-highlight' : 'annotation-underline',
-          overviewRuler: {
-            color: resolveStoredMarkupColor(a),
-            position: monaco.editor.OverviewRulerLane.Full
-          }
-        }
-      }))
-
-    decorationIdsRef.current = editor.deltaDecorations(decorationIdsRef.current, decos)
-  }, [annotations])
-
-  useEffect(() => {
-    applyDecorations()
-  }, [applyDecorations, content, monacoMounted])
+  const resolveMarkupRects = useCallback(
+    (ann: Annotation) => {
+      const editor = editorRef.current
+      const monaco = monacoRef.current
+      const surface = surfaceRef.current
+      if (!editor || !monaco || !surface || !ann.range) return []
+      return monacoRangeToContentRects(editor, monaco, ann.range, surface)
+    },
+    [monacoMounted, content]
+  )
+  useRegisterMarkupResolver(resolveMarkupRects, isActive && monacoMounted)
 
   useEffect(() => {
     if (!focusAnnotationId) return
@@ -171,11 +154,10 @@ export function TxtViewer({ filePath, isActive = true }: TxtViewerProps): JSX.El
         content: noteContent,
         range: range ?? undefined
       })
-      requestAnimationFrame(() => applyDecorations())
       closeToolbar()
       setShowNoteModal(false)
     },
-    [create, pendingText, pendingRange, applyDecorations]
+    [create, pendingText, pendingRange]
   )
 
   const captureSelection = useCallback((): void => {
@@ -240,6 +222,7 @@ export function TxtViewer({ filePath, isActive = true }: TxtViewerProps): JSX.El
     const scrollEl = editorRef.current
       ?.getDomNode()
       ?.querySelector('.monaco-scrollable-element') as HTMLElement | null
+    surfaceRef.current = scrollEl
     bindAnnotationSurface(scrollEl)
   }, [monacoMounted, isActive, content, bindAnnotationSurface])
 
@@ -269,8 +252,8 @@ export function TxtViewer({ filePath, isActive = true }: TxtViewerProps): JSX.El
           const scrollEl = editor
             .getDomNode()
             ?.querySelector('.monaco-scrollable-element') as HTMLElement | null
+          surfaceRef.current = scrollEl
           bindAnnotationSurface(scrollEl)
-          applyDecorations()
         }}
         options={{
           readOnly: true,

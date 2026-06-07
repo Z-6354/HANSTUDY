@@ -5,24 +5,17 @@ import {
   findLastAnnotationByType,
   toolUsesRightClickUndo
 } from './annotationToolUtils'
-import { findLastTextMarkupAnnotation, refreshTextMarkup } from './textUtils'
+import { findLastTextMarkupAnnotation } from './textUtils'
 
 async function undoDomToolAction(
   tool: AnnotationTool,
   annotations: Annotation[],
-  remove: (id: string) => Promise<void>,
-  markupRoot: HTMLElement | null
+  remove: (id: string) => Promise<void>
 ): Promise<boolean> {
   if (tool === 'highlight' || tool === 'underline') {
     const last = findLastTextMarkupAnnotation(annotations, tool)
     if (!last) return false
     await remove(last.id)
-    if (markupRoot) {
-      refreshTextMarkup(
-        markupRoot,
-        annotations.filter((a) => a.id !== last.id)
-      )
-    }
     window.getSelection()?.removeAllRanges()
     return true
   }
@@ -49,8 +42,8 @@ export function useDomAnnotationToolUndo(
     const tool = useWorkspaceStore.getState().annotationTool
     if (!toolUsesRightClickUndo(tool)) return
     if (tool === 'pen' || tool === 'rect' || tool === 'eraser') return
-    await undoDomToolAction(tool, annotations, remove, containerRef.current)
-  }, [annotations, remove, containerRef])
+    await undoDomToolAction(tool, annotations, remove)
+  }, [annotations, remove])
 
   useEffect(() => {
     const el = containerRef.current
@@ -82,7 +75,7 @@ export function useMonacoAnnotationToolUndo(
     const tool = useWorkspaceStore.getState().annotationTool
     if (!toolUsesRightClickUndo(tool)) return
     if (tool === 'pen' || tool === 'rect' || tool === 'eraser') return
-    await undoDomToolAction(tool, annotations, remove, null)
+    await undoDomToolAction(tool, annotations, remove)
   }, [annotations, remove])
 
   useEffect(() => {

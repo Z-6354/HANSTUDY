@@ -7,8 +7,13 @@ import type * as MonacoApi from 'monaco-editor'
 import type { editor as MonacoEditor } from 'monaco-editor'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useBindAnnotationSurface } from '../../../features/reader/annotations/useBindAnnotationSurface'
-import { resolveMarkupColor, resolveStoredMarkupColor } from '../../../features/reader/annotations/annotationMarkup'
-import { applyDomAnnotation, blockViewerContextMenu, refreshTextMarkup, scrollToAnnotationText } from '../../../features/reader/annotations/textUtils'
+import { resolveMarkupColor } from '../../../features/reader/annotations/annotationMarkup'
+import {
+  monacoRangeToContentRects,
+  resolveDomMarkupRects
+} from '../../../features/reader/annotations/markupOverlayUtils'
+import { blockViewerContextMenu, scrollToAnnotationText } from '../../../features/reader/annotations/textUtils'
+import { useRegisterMarkupResolver } from '../../../features/reader/annotations/useRegisterMarkupResolver'
 import { NoteInputModal, SelectionToolbar } from '../../../features/reader/annotations/SelectionToolbar'
 import { useAnnotations } from '../../../features/reader/annotations/useAnnotations'
 import { useDomTextSelection } from '../../../features/reader/annotations/useDomTextSelection'
@@ -17,7 +22,7 @@ import { useDomAnnotationToolUndo, useMonacoAnnotationToolUndo } from '../../../
 import { useDomFind } from '../../../features/reader/find/useDomFind'
 import { useViewerCommand } from '../../../features/reader/find/useViewerCommand'
 import { selectAllInElement } from '../../../features/reader/find/domFind'
-import type { TextRange } from '../../../types/global.d'
+import type { Annotation, TextRange } from '../../../types/global.d'
 import { useWorkspaceStore } from '../../../stores/workspaceStore'
 
 export type MdViewMode = 'preview' | 'source'
@@ -68,7 +73,7 @@ export function MdViewer({ filePath, isActive = true }: MdViewerProps): JSX.Elem
   const previewRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null)
   const monacoRef = useRef<typeof MonacoApi | null>(null)
-  const decorationIdsRef = useRef<string[]>([])
+  const monacoSurfaceRef = useRef<HTMLElement | null>(null)
   const monacoApplyingRef = useRef(false)
   const bindAnnotationSurface = useBindAnnotationSurface()
 
@@ -160,6 +165,7 @@ export function MdViewer({ filePath, isActive = true }: MdViewerProps): JSX.Elem
     const el = editor
       .getDomNode()
       ?.querySelector('.monaco-scrollable-element') as HTMLElement | null
+    monacoSurfaceRef.current = el
     bindAnnotationSurface(el)
   }, [viewMode, previewHtml, loading, monacoMounted, isActive, bindAnnotationSurface])
 
@@ -169,40 +175,23 @@ export function MdViewer({ filePath, isActive = true }: MdViewerProps): JSX.Elem
     el.innerHTML = previewHtml
   }, [previewHtml, viewMode])
 
-  useEffect(() => {
-    const el = previewRef.current
-    if (!el || viewMode !== 'preview') return
-    refreshTextMarkup(el, annotations)
-  }, [previewHtml, annotations, viewMode])
-
-  const applyDecorations = useCallback(() => {
-    const editor = editorRef.current
-    const monaco = monacoRef.current
-    if (!editor || !monaco) return
-    const decos = annotations
-      .filter((a) => a.range && (a.type === 'highlight' || a.type === 'underline'))
-      .map((a) => ({
-        range: new monaco.Range(
-          a.range!.startLine,
-          a.range!.startColumn,
-          a.range!.endLine,
-          a.range!.endColumn
-        ),
-        options: {
-          inlineClassName:
-            a.type === 'highlight' ? 'annotation-highlight' : 'annotation-underline',
-          overviewRuler: {
-            color: resolveStoredMarkupColor(a),
-            position: monaco.editor.OverviewRulerLane.Full
-          }
-        }
-      }))
-    decorationIdsRef.current = editor.deltaDecorations(decorationIdsRef.current, decos)
-  }, [annotations])
-
-  useEffect(() => {
-    if (viewMode === 'source') applyDecorations()
-  }, [applyDecorations, viewMode, content, monacoMounted])
+  const resolveMarkupRects = useCallback(
+    (ann: Annotation) => {
+      if (viewMode === 'source') {
+        const editor = editorRef.current
+        const monaco = monacoRef.current
+        const surface = monacoSurfaceRef.current
+        if (!editor || !monaco || !surface || !ann.range) return []
+        return monacoRangeToContentRects(editor, monaco, ann.range, surface)
+      }
+      const surface = previewHostRef.current
+      const root = previewRef.current
+      if (!surface || !root) return []
+      return resolveDomMarkupRects(ann, surface, root)
+    },
+    [viewMode, previewHtml, content, monacoMounted]
+  )
+  useRegisterMarkupResolver(resolveMarkupRects, isActive && !loading)
 
   useDomFind(previewRef.current, isActive && viewMode === 'preview')
 
@@ -284,13 +273,6 @@ export function MdViewer({ filePath, isActive = true }: MdViewerProps): JSX.Elem
       const range = override?.range !== undefined ? override.range : pendingRange
       if (!text) return
       const color = resolveMarkupColor(type === 'note' ? 'note' : type)
-      if (
-        viewMode === 'preview' &&
-        previewRef.current &&
-        (type === 'highlight' || type === 'underline')
-      ) {
-        applyDomAnnotation(previewRef.current, type, text, override?.domRange, color)
-      }
       await create({
         type,
         color,
@@ -298,13 +280,10 @@ export function MdViewer({ filePath, isActive = true }: MdViewerProps): JSX.Elem
         content: noteContent,
         range: range ?? undefined
       })
-      if (viewMode === 'source') {
-        requestAnimationFrame(() => applyDecorations())
-      }
       closeToolbar()
       setShowNoteModal(false)
     },
-    [create, pendingText, pendingRange, viewMode, applyDecorations]
+    [create, pendingText, pendingRange]
   )
 
   useDomSelectionEffect({
@@ -426,7 +405,10 @@ export function MdViewer({ filePath, isActive = true }: MdViewerProps): JSX.Elem
               editorRef.current = editor
               monacoRef.current = monaco
               setMonacoMounted(true)
-              applyDecorations()
+              const scrollEl = editor
+                .getDomNode()
+                ?.querySelector('.monaco-scrollable-element') as HTMLElement | null
+              monacoSurfaceRef.current = scrollEl
             }}
             options={{
               readOnly: true,

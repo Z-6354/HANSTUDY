@@ -1180,6 +1180,18 @@ mark.hanstudy-find-match-active {
   cursor: cell;
 }
 
+.annotation-markup-layer {
+  pointer-events: none;
+}
+
+.annotation-markup-highlight {
+  mix-blend-mode: multiply;
+}
+
+.annotation-markup-underline {
+  pointer-events: none;
+}
+
 .annotation-surface {
   position: relative;
 }
