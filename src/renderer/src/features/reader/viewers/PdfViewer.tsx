@@ -1,4 +1,4 @@
-import { LayoutGrid, ZoomIn, ZoomOut } from 'lucide-react'
+import { ZoomIn, ZoomOut } from 'lucide-react'
 import * as pdfjsLib from 'pdfjs-dist'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toUint8Array } from '@shared/binary'
@@ -53,8 +53,6 @@ interface PdfViewerProps {
 export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const shellRef = useRef<HTMLDivElement>(null)
-  const bodyRef = useRef<HTMLDivElement>(null)
-  const thumbRailRef = useRef<HTMLElement>(null)
   const pagesRootRef = useRef<HTMLDivElement | null>(null)
   const pagesContentRef = useRef<HTMLDivElement | null>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -97,7 +95,7 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
   const [outlineItems, setOutlineItems] = useState<PdfOutlineItem[]>([])
   const [outlineLoading, setOutlineLoading] = useState(false)
   const [outlineOpen, setOutlineOpen] = useState(false)
-  const [thumbOpen, setThumbOpen] = useState(true)
+  const [thumbOpen, setThumbOpen] = useState(false)
   const [pdfReady, setPdfReady] = useState(false)
   const [isRescaling, setIsRescaling] = useState(false)
 
@@ -305,29 +303,23 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
     openSidePanelSafely(() => setOutlineOpen(true))
   }, [commitZoomBeforeSidePanel, openSidePanelSafely])
 
-  const setThumbOpenState = useCallback((open: boolean): void => {
+  const handleThumbHoverStart = useCallback((): void => {
+    thumbOpenRef.current = true
+    commitZoomBeforeSidePanel()
+    openSidePanelSafely(() => setThumbOpen(true))
+  }, [commitZoomBeforeSidePanel, openSidePanelSafely])
+
+  const setThumbOpenSafe = useCallback((open: boolean): void => {
     thumbOpenRef.current = open
     setThumbOpen(open)
+    if (!open) requestAnimationFrame(() => resetPageZoom())
   }, [])
 
-  const handleThumbOpenChange = useCallback(
-    (open: boolean): void => {
-      if (!open) {
-        thumbOpenRef.current = false
-        setThumbOpenState(false)
-        requestAnimationFrame(() => resetPageZoom())
-        return
-      }
-      thumbOpenRef.current = true
-      commitZoomBeforeSidePanel()
-      openSidePanelSafely(() => setThumbOpenState(true))
-    },
-    [commitZoomBeforeSidePanel, openSidePanelSafely, setThumbOpenState]
-  )
-
-  const toggleThumbPanel = useCallback((): void => {
-    handleThumbOpenChange(!thumbOpenRef.current)
-  }, [handleThumbOpenChange])
+  const setOutlineOpenSafe = useCallback((open: boolean): void => {
+    outlineOpenRef.current = open
+    setOutlineOpen(open)
+    if (!open) requestAnimationFrame(() => resetPageZoom())
+  }, [])
 
   const executeNavigateToPage = useCallback(
     (pageNo: number): void => {
@@ -488,7 +480,7 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
       setOutlineItems([])
       setOutlineLoading(false)
       setOutlineOpen(false)
-      setThumbOpen(true)
+      setThumbOpen(false)
       laidOutScaleRef.current = null
       bumpRenderGeneration()
       clearPageSlots()
@@ -722,7 +714,7 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
 
   /** 缩放重绘期间移向左侧边缘时提前提交，供目录栏展开 */
   useEffect(() => {
-    const host = bodyRef.current
+    const host = shellRef.current
     if (!host || !layoutReady) return
 
     const onMove = (e: MouseEvent): void => {
@@ -829,7 +821,7 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
       })
     }
 
-    const el = bodyRef.current ?? shellRef.current
+    const el = shellRef.current
     if (!el || !layoutReady) return
     el.addEventListener('wheel', handleWheel, { passive: false })
     return () => {
@@ -837,20 +829,6 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
       if (wheelRafRef.current != null) cancelAnimationFrame(wheelRafRef.current)
     }
   }, [scheduleScaleCommit, storeZoomFocal, layoutReady])
-
-  useEffect(() => {
-    const rail = thumbRailRef.current
-    if (!rail || !thumbOpen) return
-
-    const onWheel = (e: WheelEvent): void => {
-      if (!e.ctrlKey && !e.metaKey) return
-      e.preventDefault()
-      e.stopPropagation()
-    }
-
-    rail.addEventListener('wheel', onWheel, { passive: false, capture: true })
-    return () => rail.removeEventListener('wheel', onWheel, { capture: true })
-  }, [thumbOpen])
 
   const closeToolbar = useCallback((): void => {
     setToolbarRect(null)
@@ -867,12 +845,6 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
         <IconButton icon={ZoomOut} label="缩小" onClick={() => adjustZoom(-WHEEL_ZOOM_STEP)} />
         <span>{Math.round(displayScale * 100)}%</span>
         <IconButton icon={ZoomIn} label="放大" onClick={() => adjustZoom(WHEEL_ZOOM_STEP)} />
-        <IconButton
-          icon={LayoutGrid}
-          label="缩略图"
-          active={thumbOpen}
-          onClick={toggleThumbPanel}
-        />
         <span style={{ marginLeft: 16 }}>
           第 {currentPage} / {pageCount} 页
         </span>
@@ -888,49 +860,46 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
       {error && <div className="error-state">{error}</div>}
 
       <div
-        ref={bodyRef}
-        className="pdf-body"
+        ref={shellRef}
+        className="pdf-viewer-shell"
         style={{ display: showViewer ? 'flex' : 'none' }}
       >
-        <div ref={shellRef} className="pdf-viewer-shell">
-          <PdfSideHover
-            side="left"
-            open={outlineOpen}
-            setOpen={setOutlineOpen}
-            onHoverStart={handleOutlineHoverStart}
-            label="目录"
-          >
-            <PdfOutlinePanel
-              items={outlineItems}
-              loading={outlineLoading}
-              currentPage={currentPage}
-              onNavigate={scrollToPage}
-            />
-          </PdfSideHover>
+        <PdfSideHover
+          side="left"
+          open={outlineOpen}
+          setOpen={setOutlineOpenSafe}
+          onHoverStart={handleOutlineHoverStart}
+          label="目录"
+        >
+          <PdfOutlinePanel
+            items={outlineItems}
+            loading={outlineLoading}
+            currentPage={currentPage}
+            onNavigate={scrollToPage}
+          />
+        </PdfSideHover>
 
-          <div ref={containerRef} className={`pdf-viewer${isRescaling ? ' pdf-rescaling' : ''}`}>
-            <div ref={pagesRootRef} className="pdf-pages-root">
-              <div ref={pagesContentRef} className="pdf-pages-content" />
-            </div>
+        <div ref={containerRef} className={`pdf-viewer${isRescaling ? ' pdf-rescaling' : ''}`}>
+          <div ref={pagesRootRef} className="pdf-pages-root">
+            <div ref={pagesContentRef} className="pdf-pages-content" />
           </div>
         </div>
 
-        <aside
-          ref={thumbRailRef}
-          className={`pdf-thumb-rail-overlay${thumbOpen ? '' : ' pdf-thumb-rail-hidden'}`}
-          aria-label="缩略图"
-          aria-hidden={!thumbOpen}
+        <PdfSideHover
+          side="right"
+          open={thumbOpen}
+          setOpen={setThumbOpenSafe}
+          onHoverStart={handleThumbHoverStart}
+          label="缩略图"
         >
           <PdfThumbnailPanel
             pdf={pdfReady ? pdfDocRef.current : null}
             pageCount={pageCount}
             currentPage={currentPage}
             open={thumbOpen}
-            enabled={thumbOpen}
-            onEnabledChange={handleThumbOpenChange}
             onNavigate={scrollToPage}
           />
-        </aside>
+        </PdfSideHover>
       </div>
 
       {toolbarRect && (

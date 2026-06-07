@@ -10,8 +10,6 @@ interface PdfThumbnailPanelProps {
   pageCount: number
   currentPage: number
   open: boolean
-  enabled: boolean
-  onEnabledChange: (enabled: boolean) => void
   onNavigate: (page: number) => void
 }
 
@@ -27,8 +25,6 @@ export function PdfThumbnailPanel({
   pageCount,
   currentPage,
   open,
-  enabled,
-  onEnabledChange,
   onNavigate
 }: PdfThumbnailPanelProps): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -50,7 +46,7 @@ export function PdfThumbnailPanel({
   }, [])
 
   useEffect(() => {
-    if (!open || !enabled || !pdf || pageCount <= 0 || !scrollRef.current) return
+    if (!open || !pdf || pageCount <= 0 || !scrollRef.current) return
 
     let cancelled = false
     const pending = new Set<number>()
@@ -99,7 +95,7 @@ export function PdfThumbnailPanel({
       observerRef.current?.disconnect()
       observerRef.current = null
     }
-  }, [open, enabled, pdf, pageCount, renderTick])
+  }, [open, pdf, pageCount, renderTick])
 
   useEffect(() => {
     return () => {
@@ -136,26 +132,14 @@ export function PdfThumbnailPanel({
   }, [open, currentPage, pageCount])
 
   return (
-    <div className="pdf-thumb-rail-inner">
-      <div className="pdf-thumb-rail-header">
+    <div className="pdf-side-panel-inner">
+      <div className="pdf-side-panel-header">
         <LayoutGrid size={14} aria-hidden />
-        <span className="pdf-thumb-rail-title">缩略图</span>
-        <label className="pdf-thumb-rail-switch" title="显示缩略图">
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={(e) => {
-              e.stopPropagation()
-              onEnabledChange(e.target.checked)
-            }}
-          />
-          <span className="pdf-thumb-rail-switch-track" aria-hidden />
-        </label>
+        <span>缩略图</span>
       </div>
       <div
         ref={scrollRef}
-        className="pdf-thumb-body"
-        hidden={!open}
+        className="pdf-side-panel-body pdf-thumb-body"
         onPointerDown={drag.onPointerDown}
         onPointerMove={drag.onPointerMove}
         onPointerUp={drag.onPointerUp}
