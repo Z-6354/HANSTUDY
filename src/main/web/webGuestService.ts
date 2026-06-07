@@ -1,4 +1,4 @@
-import { BrowserView, BrowserWindow } from 'electron'
+import { BrowserView, BrowserWindow, type WebContents } from 'electron'
 import type { Rectangle } from 'electron'
 import { join } from 'path'
 
@@ -26,10 +26,19 @@ function getActiveGuest(): BrowserView | null {
   return guestViews.get(activeDocId) ?? null
 }
 
+function canGuestGoBack(wc: WebContents): boolean {
+  return wc.navigationHistory.canGoBack()
+}
+
+function canGuestGoForward(wc: WebContents): boolean {
+  return wc.navigationHistory.canGoForward()
+}
+
 function guestNavigation(view: BrowserView): { canGoBack: boolean; canGoForward: boolean } {
+  const wc = view.webContents
   return {
-    canGoBack: view.webContents.canGoBack(),
-    canGoForward: view.webContents.canGoForward()
+    canGoBack: canGuestGoBack(wc),
+    canGoForward: canGuestGoForward(wc)
   }
 }
 
@@ -182,15 +191,17 @@ export function setWebGuestBounds(bounds: Rectangle): void {
 
 export function webGuestGoBack(): boolean {
   const guestView = getActiveGuest()
-  if (!guestView?.webContents.canGoBack()) return false
-  guestView.webContents.goBack()
+  const wc = guestView?.webContents
+  if (!wc || !canGuestGoBack(wc)) return false
+  wc.goBack()
   return true
 }
 
 export function webGuestGoForward(): boolean {
   const guestView = getActiveGuest()
-  if (!guestView?.webContents.canGoForward()) return false
-  guestView.webContents.goForward()
+  const wc = guestView?.webContents
+  if (!wc || !canGuestGoForward(wc)) return false
+  wc.goForward()
   return true
 }
 
@@ -284,7 +295,7 @@ export function getWebGuestState(): {
   return {
     url: guestView?.webContents.getURL() ?? '',
     attached: guestView != null,
-    canGoBack: guestView?.webContents.canGoBack() ?? false,
-    canGoForward: guestView?.webContents.canGoForward() ?? false
+    canGoBack: guestView ? canGuestGoBack(guestView.webContents) : false,
+    canGoForward: guestView ? canGuestGoForward(guestView.webContents) : false
   }
 }

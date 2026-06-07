@@ -3,7 +3,7 @@ import type * as MonacoApi from 'monaco-editor'
 import type { editor as MonacoEditor } from 'monaco-editor'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { resolveMarkupColor, resolveStoredMarkupColor } from '../../../features/reader/annotations/annotationMarkup'
-import { useAnnotationSurface } from '../../../features/reader/annotations/AnnotationSurfaceContext'
+import { useBindAnnotationSurface } from '../../../features/reader/annotations/useBindAnnotationSurface'
 import { NoteInputModal, SelectionToolbar } from '../../../features/reader/annotations/SelectionToolbar'
 import { useAnnotations } from '../../../features/reader/annotations/useAnnotations'
 import { useMonacoAnnotationToolUndo } from '../../../features/reader/annotations/useAnnotationToolUndo'
@@ -30,9 +30,7 @@ export function TxtViewer({ filePath, isActive = true }: TxtViewerProps): JSX.El
   const monacoRef = useRef<typeof MonacoApi | null>(null)
   const decorationIdsRef = useRef<string[]>([])
   const monacoApplyingRef = useRef(false)
-  const [scrollSurface, setScrollSurface] = useState<HTMLElement | null>(null)
-
-  useAnnotationSurface(scrollSurface)
+  const bindAnnotationSurface = useBindAnnotationSurface()
 
   const { annotations, create, remove } = useAnnotations(filePath, isActive)
   const { sendToAI, setSelection, focusAnnotationId, setFocusAnnotationId, annotationTool, closeFindBar } =
@@ -234,6 +232,18 @@ export function TxtViewer({ filePath, isActive = true }: TxtViewerProps): JSX.El
   }, [filePath, isActive, saveAnnotation, setSelection])
 
   useEffect(() => {
+    if (!monacoMounted) return
+    if (!isActive) {
+      bindAnnotationSurface(null)
+      return
+    }
+    const scrollEl = editorRef.current
+      ?.getDomNode()
+      ?.querySelector('.monaco-scrollable-element') as HTMLElement | null
+    bindAnnotationSurface(scrollEl)
+  }, [monacoMounted, isActive, content, bindAnnotationSurface])
+
+  useEffect(() => {
     const editor = editorRef.current
     if (!editor) return
     const disposable = editor.onMouseUp(() => {
@@ -259,7 +269,7 @@ export function TxtViewer({ filePath, isActive = true }: TxtViewerProps): JSX.El
           const scrollEl = editor
             .getDomNode()
             ?.querySelector('.monaco-scrollable-element') as HTMLElement | null
-          setScrollSurface(scrollEl)
+          bindAnnotationSurface(scrollEl)
           applyDecorations()
         }}
         options={{

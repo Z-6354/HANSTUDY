@@ -1,12 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { flushSync } from 'react-dom'
 import { createPortal } from 'react-dom'
 import { AnnotationOverlay } from './AnnotationOverlay'
 
 interface AnnotationSurfaceContextValue {
   registerSurface: (el: HTMLElement | null) => void
+  refreshPortal: () => void
 }
 
-const AnnotationSurfaceContext = createContext<AnnotationSurfaceContextValue | null>(null)
+export const AnnotationSurfaceContext = createContext<AnnotationSurfaceContextValue | null>(null)
 
 export function useAnnotationSurface(surface: HTMLElement | null): void {
   const ctx = useContext(AnnotationSurfaceContext)
@@ -15,6 +17,12 @@ export function useAnnotationSurface(surface: HTMLElement | null): void {
     ctx.registerSurface(surface)
     return () => ctx.registerSurface(null)
   }, [ctx, surface])
+}
+
+/** PDF 等视图在 imperative DOM 更新后强制 remount 绘图层 */
+export function useAnnotationPortalRefresh(): () => void {
+  const ctx = useContext(AnnotationSurfaceContext)
+  return ctx?.refreshPortal ?? (() => {})
 }
 
 interface AnnotatedViewerShellProps {
@@ -29,12 +37,17 @@ export function AnnotatedViewerShell({
   children
 }: AnnotatedViewerShellProps): JSX.Element {
   const [surface, setSurface] = useState<HTMLElement | null>(null)
+  const [portalKey, setPortalKey] = useState(0)
 
   const registerSurface = useCallback((el: HTMLElement | null) => {
-    setSurface(el)
+    flushSync(() => setSurface(el))
   }, [])
 
-  const value = useMemo(() => ({ registerSurface }), [registerSurface])
+  const refreshPortal = useCallback(() => {
+    setPortalKey((key) => key + 1)
+  }, [])
+
+  const value = useMemo(() => ({ registerSurface, refreshPortal }), [registerSurface, refreshPortal])
 
   return (
     <AnnotationSurfaceContext.Provider value={value}>
@@ -42,7 +55,12 @@ export function AnnotatedViewerShell({
         {children}
         {surface &&
           createPortal(
-            <AnnotationOverlay docPath={docPath} isActive={isActive} surface={surface} />,
+            <AnnotationOverlay
+              key={portalKey}
+              docPath={docPath}
+              isActive={isActive}
+              surface={surface}
+            />,
             surface
           )}
       </div>

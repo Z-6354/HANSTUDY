@@ -6,7 +6,7 @@ import { marked } from 'marked'
 import type * as MonacoApi from 'monaco-editor'
 import type { editor as MonacoEditor } from 'monaco-editor'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useAnnotationSurface } from '../../../features/reader/annotations/AnnotationSurfaceContext'
+import { useBindAnnotationSurface } from '../../../features/reader/annotations/useBindAnnotationSurface'
 import { resolveMarkupColor, resolveStoredMarkupColor } from '../../../features/reader/annotations/annotationMarkup'
 import { applyDomAnnotation, blockViewerContextMenu, refreshTextMarkup, scrollToAnnotationText } from '../../../features/reader/annotations/textUtils'
 import { NoteInputModal, SelectionToolbar } from '../../../features/reader/annotations/SelectionToolbar'
@@ -64,15 +64,13 @@ export function MdViewer({ filePath, isActive = true }: MdViewerProps): JSX.Elem
   const [showNoteModal, setShowNoteModal] = useState(false)
   const [monacoMounted, setMonacoMounted] = useState(false)
 
-  const previewHostRef = useRef<HTMLDivElement>(null)
+  const previewHostRef = useRef<HTMLDivElement | null>(null)
   const previewRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null)
   const monacoRef = useRef<typeof MonacoApi | null>(null)
   const decorationIdsRef = useRef<string[]>([])
   const monacoApplyingRef = useRef(false)
-  const [scrollSurface, setScrollSurface] = useState<HTMLElement | null>(null)
-
-  useAnnotationSurface(scrollSurface)
+  const bindAnnotationSurface = useBindAnnotationSurface()
 
   const { annotations, create, remove } = useAnnotations(filePath, isActive)
   const { sendToAI, setSelection, focusAnnotationId, setFocusAnnotationId, annotationTool, closeFindBar } =
@@ -137,17 +135,33 @@ export function MdViewer({ filePath, isActive = true }: MdViewerProps): JSX.Elem
     return DOMPurify.sanitize(marked.parse(content) as string)
   }, [content])
 
+  const bindPreviewHost = useCallback(
+    (el: HTMLDivElement | null) => {
+      previewHostRef.current = el
+      if (viewMode === 'preview') bindAnnotationSurface(el)
+    },
+    [viewMode, bindAnnotationSurface]
+  )
+
   useEffect(() => {
+    if (!isActive) {
+      bindAnnotationSurface(null)
+      return
+    }
     if (viewMode === 'preview') {
-      setScrollSurface(previewHostRef.current)
+      bindAnnotationSurface(previewHostRef.current)
       return
     }
     const editor = editorRef.current
+    if (!editor || !monacoMounted) {
+      bindAnnotationSurface(null)
+      return
+    }
     const el = editor
-      ?.getDomNode()
+      .getDomNode()
       ?.querySelector('.monaco-scrollable-element') as HTMLElement | null
-    setScrollSurface(el)
-  }, [viewMode, previewHtml, loading])
+    bindAnnotationSurface(el)
+  }, [viewMode, previewHtml, loading, monacoMounted, isActive, bindAnnotationSurface])
 
   useEffect(() => {
     const el = previewRef.current
@@ -394,7 +408,7 @@ export function MdViewer({ filePath, isActive = true }: MdViewerProps): JSX.Elem
       </div>
 
       {viewMode === 'preview' ? (
-        <div ref={previewHostRef} className="markdown-preview-host">
+        <div ref={bindPreviewHost} className="markdown-preview-host">
           <div
             ref={previewRef}
             className="markdown-preview"

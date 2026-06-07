@@ -3,7 +3,8 @@ import * as pdfjsLib from 'pdfjs-dist'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toUint8Array } from '@shared/binary'
 import { IconButton } from '../../../components/IconButton'
-import { useAnnotationSurface } from '../annotations/AnnotationSurfaceContext'
+import { useAnnotationPortalRefresh } from '../annotations/AnnotationSurfaceContext'
+import { useBindAnnotationSurface } from '../annotations/useBindAnnotationSurface'
 import { NoteInputModal, SelectionToolbar } from '../annotations/SelectionToolbar'
 import { resolveMarkupColor } from '../annotations/annotationMarkup'
 import { applyDomAnnotation, refreshTextMarkup, scrollToAnnotationText } from '../annotations/textUtils'
@@ -57,7 +58,8 @@ interface PdfViewerProps {
 
 export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
-  const pagesRootRef = useRef<HTMLDivElement>(null)
+  const pagesRootRef = useRef<HTMLDivElement | null>(null)
+  const pagesContentRef = useRef<HTMLDivElement | null>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
   const pdfDocRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null)
   const pageSlotsRef = useRef<Map<number, PdfPageSlot>>(new Map())
@@ -95,7 +97,6 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
   } | null>(null)
   const [expandedNoteId, setExpandedNoteId] = useState<string | null>(null)
   const [showTextNoteModal, setShowTextNoteModal] = useState(false)
-  const [scrollSurface, setScrollSurface] = useState<HTMLDivElement | null>(null)
   const [zoomTransformOrigin, setZoomTransformOrigin] = useState('top center')
   const [outlineItems, setOutlineItems] = useState<PdfOutlineItem[]>([])
   const [outlineLoading, setOutlineLoading] = useState(false)
@@ -114,7 +115,20 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
 
   const previewRatio = previewScaleRatio(displayScale, scale)
 
-  useAnnotationSurface(scrollSurface)
+  const refreshAnnotationPortal = useAnnotationPortalRefresh()
+  const bindAnnotationSurface = useBindAnnotationSurface()
+
+  const bindPagesRoot = useCallback(
+    (el: HTMLDivElement | null) => {
+      pagesRootRef.current = el
+      bindAnnotationSurface(isActive && !loading ? el : null)
+    },
+    [bindAnnotationSurface, isActive, loading]
+  )
+
+  useEffect(() => {
+    bindAnnotationSurface(isActive && !loading ? pagesRootRef.current : null)
+  }, [isActive, loading, layoutReady, bindAnnotationSurface])
 
   const { annotations, create, remove } = useAnnotations(filePath, isActive && !loading)
   const {
@@ -300,7 +314,8 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
 
   const notifyAnnotationLayout = useCallback((): void => {
     pagesRootRef.current?.dispatchEvent(new Event(ANNOTATION_SURFACE_RESIZE_EVENT))
-  }, [])
+    refreshAnnotationPortal()
+  }, [refreshAnnotationPortal])
 
   const resolveZoomOrigin = useCallback((clientX: number, clientY: number): string => {
     const container = containerRef.current
@@ -404,10 +419,6 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
   }, [scale, currentPage, layoutReady, saveProgress, isRestoringRef])
 
   useEffect(() => {
-    setScrollSurface(pagesRootRef.current)
-  }, [loading, pageCount, layoutReady])
-
-  useEffect(() => {
     let cancelled = false
     let loadingTask: ReturnType<typeof pdfjsLib.getDocument> | null = null
 
@@ -491,8 +502,8 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
 
   useEffect(() => {
     const pdf = pdfDocRef.current
-    const pagesRoot = pagesRootRef.current
-    if (!pdf || !pagesRoot || loading || pageCount === 0) return
+    const pagesContent = pagesContentRef.current
+    if (!pdf || !pagesContent || loading || pageCount === 0) return
 
     let cancelled = false
     const layoutScale = scaleRef.current
@@ -527,7 +538,8 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
           })
           frag.appendChild(wrap)
         })
-        pagesRoot.replaceChildren(frag)
+        pagesContent.replaceChildren(frag)
+        refreshAnnotationPortal()
 
         if (cancelled || generation !== renderGenerationRef.current) return
         laidOutScaleRef.current = layoutScale
@@ -549,7 +561,7 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
     return () => {
       cancelled = true
     }
-  }, [filePath, loading, pageCount, bumpRenderGeneration, notifyAnnotationLayout])
+  }, [filePath, loading, pageCount, bumpRenderGeneration, notifyAnnotationLayout, refreshAnnotationPortal])
 
   useEffect(() => {
     const pdf = pdfDocRef.current
@@ -937,14 +949,16 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
           onClick={handlePageClick}
         >
           <div
-            ref={pagesRootRef}
+            ref={bindPagesRoot}
             className="pdf-pages-root"
             style={
               isPreviewingZoom
                 ? { transform: `scale(${previewRatio})`, transformOrigin: zoomTransformOrigin }
                 : undefined
             }
-          />
+          >
+            <div ref={pagesContentRef} className="pdf-pages-content" />
+          </div>
         </div>
       </div>
 

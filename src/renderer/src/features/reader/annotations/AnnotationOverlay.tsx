@@ -4,6 +4,7 @@ import type { Annotation, DrawShape, ShapePoint } from '../../../types/global.d'
 import {
   ANNOTATION_SURFACE_RESIZE_EVENT,
   clientToContentPoint,
+  getContentElement,
   getContentSize,
   getScrollContainer,
   hitTestAnnotation,
@@ -31,6 +32,24 @@ interface DraftRect {
 }
 
 type Draft = DraftPen | DraftRect
+
+const IGNORE_DRAW_TARGETS =
+  '.annotation-toolbar, .selection-toolbar, .note-input-modal, .global-search-bar, .document-find-bar, .titlebar, .tab-bar, .pdf-toolbar, .pdf-side-hover, .pdf-side-panel, .pdf-side-trigger, .pdf-outline-item, .pdf-thumb-item'
+
+function isIgnorableDrawTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false
+  return !!target.closest(IGNORE_DRAW_TARGETS)
+}
+
+function isWithinSurface(clientX: number, clientY: number, surface: HTMLElement): boolean {
+  const rect = getContentElement(surface).getBoundingClientRect()
+  return (
+    clientX >= rect.left &&
+    clientX <= rect.right &&
+    clientY >= rect.top &&
+    clientY <= rect.bottom
+  )
+}
 
 function renderAnnotation(
   annotation: Annotation,
@@ -88,21 +107,47 @@ export function AnnotationOverlay({
   const drawingRef = useRef(false)
   const draftRef = useRef<Draft | null>(null)
   const eraserUndoStackRef = useRef<Annotation[]>([])
+  const activePointerIdRef = useRef<number | null>(null)
 
   const { annotations, create, remove } = useAnnotations(docPath, isActive)
-  const { annotationTool, annotationColor, annotationStrokeWidth, focusAnnotationId, setFocusAnnotationId } =
-    useWorkspaceStore()
+  const annotationTool = useWorkspaceStore((s) => s.annotationTool)
+  const annotationColor = useWorkspaceStore((s) => s.annotationColor)
+  const annotationStrokeWidth = useWorkspaceStore((s) => s.annotationStrokeWidth)
+  const focusAnnotationId = useWorkspaceStore((s) => s.focusAnnotationId)
+  const setFocusAnnotationId = useWorkspaceStore((s) => s.setFocusAnnotationId)
 
   const drawAnnotations = annotations.filter((a) => a.type === 'pen' || a.type === 'rect')
-  const isZoomPreview = surface.closest('.pdf-zoom-preview') != null
+  const drawAnnotationsRef = useRef(drawAnnotations)
+  const annotationsRef = useRef(annotations)
+  const savePenRef = useRef<(points: ShapePoint[]) => Promise<void>>(async () => {})
+  const saveRectRef = useRef<(start: ShapePoint, end: ShapePoint) => Promise<void>>(async () => {})
+  const annotationToolRef = useRef(annotationTool)
+  drawAnnotationsRef.current = drawAnnotations
+  annotationsRef.current = annotations
+  annotationToolRef.current = annotationTool
+
+  const applyDraft = useCallback((next: Draft | null) => {
+    draftRef.current = next
+    setDraft(next)
+  }, [])
+
+  const isPdfRescaling = surface.closest('.pdf-rescaling') != null
   const interactive =
     isActive &&
-    !isZoomPreview &&
+    !isPdfRescaling &&
     (annotationTool === 'pen' || annotationTool === 'rect' || annotationTool === 'eraser')
 
   const updateSize = useCallback(() => {
     setSize(getContentSize(surface))
   }, [surface])
+
+  useEffect(() => {
+    if (isActive) updateSize()
+  }, [isActive, updateSize])
+
+  useEffect(() => {
+    if (interactive) updateSize()
+  }, [interactive, updateSize])
 
   useEffect(() => {
     updateSize()
@@ -114,18 +159,22 @@ export function AnnotationOverlay({
     mo.observe(surface, { childList: true, subtree: true, attributes: true })
     scrollEl.addEventListener('scroll', updateSize, { passive: true })
     surface.addEventListener(ANNOTATION_SURFACE_RESIZE_EVENT, updateSize)
+    window.addEventListener('resize', updateSize)
     return () => {
       surface.classList.remove('annotation-surface')
       ro.disconnect()
       mo.disconnect()
       scrollEl.removeEventListener('scroll', updateSize)
       surface.removeEventListener(ANNOTATION_SURFACE_RESIZE_EVENT, updateSize)
+      window.removeEventListener('resize', updateSize)
     }
   }, [surface, updateSize])
 
   useEffect(() => {
     if (!focusAnnotationId || !isActive) return
-    const ann = drawAnnotations.find((a) => a.id === focusAnnotationId)
+    const ann = annotations.find(
+      (a) => a.id === focusAnnotationId && (a.type === 'pen' || a.type === 'rect')
+    )
     if (!ann?.shape) return
 
     const scrollEl = getScrollContainer(surface)
@@ -148,11 +197,15 @@ export function AnnotationOverlay({
       behavior: 'smooth'
     })
     setFocusAnnotationId(null)
-  }, [drawAnnotations, focusAnnotationId, isActive, setFocusAnnotationId, surface])
+  }, [annotations, focusAnnotationId, isActive, setFocusAnnotationId, surface])
 
   const savePen = useCallback(
     async (points: ShapePoint[]): Promise<void> => {
-      if (points.length < 2) return
+      if (points.length === 0) return
+      if (points.length === 1) {
+        const p = points[0]
+        points = [p, { x: p.x + 0.0005, y: p.y + 0.0005 }]
+      }
       const shape: DrawShape = { points, strokeWidth: annotationStrokeWidth }
       await create({ type: 'pen', color: annotationColor, shape })
     },
@@ -169,24 +222,75 @@ export function AnnotationOverlay({
     [annotationColor, annotationStrokeWidth, create]
   )
 
-  useEffect(() => {
-    draftRef.current = draft
-  }, [draft])
+  savePenRef.current = savePen
+  saveRectRef.current = saveRect
 
   useEffect(() => {
     if (!interactive) return
 
-    const onSelectStart = (e: Event): void => {
-      e.preventDefault()
+    const releaseActiveCapture = (): void => {
+      const pointerId = activePointerIdRef.current
+      if (pointerId == null) return
+      activePointerIdRef.current = null
+      try {
+        if (surface.hasPointerCapture(pointerId)) {
+          surface.releasePointerCapture(pointerId)
+        }
+      } catch {
+        /* pointer 可能已释放 */
+      }
+    }
+
+    const stopWindowTracking = (): void => {
+      window.removeEventListener('pointermove', onPointerMove, true)
+      window.removeEventListener('pointerup', onWindowPointerUp, true)
+      window.removeEventListener('pointercancel', onWindowPointerUp, true)
+      releaseActiveCapture()
+    }
+
+    const onPointerMove = (e: PointerEvent): void => {
+      if (!drawingRef.current) return
+      const point = clientToContentPoint(e.clientX, e.clientY, surface)
+      setDraft((prev) => {
+        if (!prev) return prev
+        const next =
+          prev.kind === 'pen'
+            ? { kind: 'pen' as const, points: [...prev.points, point] }
+            : { kind: 'rect' as const, start: prev.start, end: point }
+        draftRef.current = next
+        return next
+      })
+    }
+
+    const finishDraw = (): void => {
+      if (!drawingRef.current) return
+      drawingRef.current = false
+      stopWindowTracking()
+      const current = draftRef.current
+      applyDraft(null)
+      if (!current) return
+      if (current.kind === 'pen') {
+        void savePenRef.current(current.points)
+      } else {
+        void saveRectRef.current(current.start, current.end)
+      }
+    }
+
+    const onWindowPointerUp = (): void => {
+      finishDraw()
     }
 
     const onPointerDown = (e: PointerEvent): void => {
       if (e.button !== 0) return
+      if (isIgnorableDrawTarget(e.target)) return
+      if (!isWithinSurface(e.clientX, e.clientY, surface)) return
 
-      if (annotationTool === 'eraser') {
+      const tool = annotationToolRef.current
+      if (tool === 'eraser') {
         e.preventDefault()
+        e.stopPropagation()
         window.getSelection()?.removeAllRanges()
-        const hit = [...drawAnnotations]
+        const hit = [...drawAnnotationsRef.current]
           .reverse()
           .find((a) => hitTestAnnotation(a, e.clientX, e.clientY, surface))
         if (hit) {
@@ -196,48 +300,33 @@ export function AnnotationOverlay({
         return
       }
 
+      if (tool !== 'pen' && tool !== 'rect') return
+      if (drawingRef.current) return
+
       e.preventDefault()
-      surface.setPointerCapture(e.pointerId)
+      e.stopPropagation()
       drawingRef.current = true
+      activePointerIdRef.current = e.pointerId
+      try {
+        surface.setPointerCapture(e.pointerId)
+      } catch {
+        /* 少数环境不支持 capture，仍依赖 window 监听 */
+      }
       const point = clientToContentPoint(e.clientX, e.clientY, surface)
 
-      if (annotationTool === 'pen') {
-        setDraft({ kind: 'pen', points: [point] })
-      } else if (annotationTool === 'rect') {
-        setDraft({ kind: 'rect', start: point, end: point })
-      }
-    }
-
-    const onPointerMove = (e: PointerEvent): void => {
-      if (!drawingRef.current) return
-      const current = draftRef.current
-      if (!current) return
-      const point = clientToContentPoint(e.clientX, e.clientY, surface)
-
-      if (current.kind === 'pen') {
-        setDraft({ kind: 'pen', points: [...current.points, point] })
+      if (tool === 'pen') {
+        applyDraft({ kind: 'pen', points: [point] })
       } else {
-        setDraft({ kind: 'rect', start: current.start, end: point })
+        applyDraft({ kind: 'rect', start: point, end: point })
       }
-    }
 
-    const finishDraw = (e: PointerEvent): void => {
-      if (!drawingRef.current) return
-      drawingRef.current = false
-      if (surface.hasPointerCapture(e.pointerId)) {
-        surface.releasePointerCapture(e.pointerId)
-      }
-      const current = draftRef.current
-      if (!current) return
-      if (current.kind === 'pen') {
-        void savePen(current.points)
-      } else {
-        void saveRect(current.start, current.end)
-      }
-      setDraft(null)
+      window.addEventListener('pointermove', onPointerMove, true)
+      window.addEventListener('pointerup', onWindowPointerUp, true)
+      window.addEventListener('pointercancel', onWindowPointerUp, true)
     }
 
     const onContextMenu = (e: MouseEvent): void => {
+      if (!isWithinSurface(e.clientX, e.clientY, surface)) return
       const tool = useWorkspaceStore.getState().annotationTool
       if (!toolUsesRightClickUndo(tool)) return
       if (tool !== 'pen' && tool !== 'rect' && tool !== 'eraser') return
@@ -245,12 +334,13 @@ export function AnnotationOverlay({
 
       if ((tool === 'pen' || tool === 'rect') && drawingRef.current) {
         drawingRef.current = false
-        setDraft(null)
+        stopWindowTracking()
+        applyDraft(null)
         return
       }
 
       if (tool === 'pen' || tool === 'rect') {
-        const last = findLastAnnotationByType(annotations, tool)
+        const last = findLastAnnotationByType(annotationsRef.current, tool)
         if (last) void remove(last.id)
         return
       }
@@ -259,22 +349,22 @@ export function AnnotationOverlay({
       if (restored) void create(annotationCreateInput(restored))
     }
 
-    surface.addEventListener('pointerdown', onPointerDown)
-    surface.addEventListener('pointermove', onPointerMove)
-    surface.addEventListener('pointerup', finishDraw)
-    surface.addEventListener('pointercancel', finishDraw)
+    const onSelectStart = (e: Event): void => {
+      e.preventDefault()
+    }
+
+    window.addEventListener('pointerdown', onPointerDown, true)
     surface.addEventListener('contextmenu', onContextMenu)
     surface.addEventListener('selectstart', onSelectStart)
 
     return () => {
-      surface.removeEventListener('pointerdown', onPointerDown)
-      surface.removeEventListener('pointermove', onPointerMove)
-      surface.removeEventListener('pointerup', finishDraw)
-      surface.removeEventListener('pointercancel', finishDraw)
+      stopWindowTracking()
+      drawingRef.current = false
+      window.removeEventListener('pointerdown', onPointerDown, true)
       surface.removeEventListener('contextmenu', onContextMenu)
       surface.removeEventListener('selectstart', onSelectStart)
     }
-  }, [interactive, annotationTool, annotations, drawAnnotations, remove, create, savePen, saveRect, surface])
+  }, [interactive, applyDraft, remove, create, surface])
 
   useEffect(() => {
     if (!interactive) return
@@ -335,9 +425,18 @@ export function AnnotationOverlay({
     return null
   })()
 
+  const overlayClass = [
+    'annotation-overlay-layer',
+    interactive ? 'annotation-overlay-interactive' : '',
+    interactive && annotationTool === 'eraser' ? 'annotation-overlay-eraser' : ''
+  ]
+    .filter(Boolean)
+    .join(' ')
+
   return (
     <svg
-      className="annotation-overlay-layer"
+      className={overlayClass}
+      style={{ left: 0, top: 0, width: size.width, height: size.height }}
       width={size.width}
       height={size.height}
       viewBox={`0 0 ${size.width} ${size.height}`}

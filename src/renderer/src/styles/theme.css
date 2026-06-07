@@ -1155,12 +1155,29 @@ mark.hanstudy-find-match-active {
   overflow: hidden;
 }
 
+.annotation-overlay-mount {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: visible;
+  z-index: 500;
+}
+
 .annotation-overlay-layer {
   position: absolute;
-  top: 0;
-  left: 0;
   z-index: 5;
   pointer-events: none;
+}
+
+.annotation-overlay-layer.annotation-overlay-interactive {
+  z-index: 1000;
+  pointer-events: auto;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.annotation-overlay-layer.annotation-overlay-eraser {
+  cursor: cell;
 }
 
 .annotation-surface {
@@ -1196,6 +1213,7 @@ mark.hanstudy-find-match-active {
 .annotation-toolbar.floating {
   position: fixed;
   z-index: 200;
+  -webkit-app-region: no-drag;
 }
 
 .annotation-toolbar.minimized {
@@ -2968,12 +2986,16 @@ u.annotation-underline {
 
 .pdf-pages-root {
   position: relative;
+  width: 100%;
+  will-change: transform;
+}
+
+.pdf-pages-content {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 16px;
   width: 100%;
-  will-change: transform;
 }
 
 .pdf-viewer.pdf-zoom-preview .pdf-pages-root {

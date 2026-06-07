@@ -4,11 +4,36 @@ const ERASER_HIT_PX = 12
 
 export const ANNOTATION_SURFACE_RESIZE_EVENT = 'annotation-surface-resize'
 
-export function getContentSize(surface: HTMLElement): { width: number; height: number } {
+/** 将内容表面在 shell 内的偏移与全内容尺寸，用于独立 overlay 挂载点定位 */
+export function getOverlayFrame(
+  surface: HTMLElement,
+  shell: HTMLElement
+): { left: number; top: number; width: number; height: number } {
+  const shellRect = shell.getBoundingClientRect()
+  const surfaceRect = surface.getBoundingClientRect()
+  const { width, height } = getContentSize(surface)
   return {
-    width: Math.max(1, surface.scrollWidth),
-    height: Math.max(1, surface.scrollHeight)
+    left: surfaceRect.left - shellRect.left,
+    top: surfaceRect.top - shellRect.top,
+    width,
+    height
   }
+}
+
+/** PDF 等视图的坐标/尺寸应以实际页面内容区为准，而非外层 pages-root */
+export function getContentElement(surface: HTMLElement): HTMLElement {
+  if (typeof surface.querySelector === 'function') {
+    const content = surface.querySelector(':scope > .pdf-pages-content')
+    if (content instanceof HTMLElement) return content
+  }
+  return surface
+}
+
+export function getContentSize(surface: HTMLElement): { width: number; height: number } {
+  const target = getContentElement(surface)
+  const width = Math.max(target.scrollWidth || 0, target.clientWidth || 0, 1)
+  const height = Math.max(target.scrollHeight || 0, target.clientHeight || 0, 1)
+  return { width, height }
 }
 
 /** PDF 等内容区与滚动容器分离时，取实际滚动的父元素 */
@@ -22,17 +47,36 @@ export function getScrollContainer(surface: HTMLElement): HTMLElement {
   return surface
 }
 
+function clientToContentCoords(
+  clientX: number,
+  clientY: number,
+  surface: HTMLElement
+): { x: number; y: number } {
+  const scrollEl = getScrollContainer(surface)
+  const rect = getContentElement(surface).getBoundingClientRect()
+
+  if (scrollEl === surface) {
+    return {
+      x: scrollEl.scrollLeft + (clientX - rect.left),
+      y: scrollEl.scrollTop + (clientY - rect.top)
+    }
+  }
+
+  // 内容表面嵌在滚动容器内（如 PDF .pdf-pages-root）：getBoundingClientRect 已含滚动位移
+  return {
+    x: clientX - rect.left,
+    y: clientY - rect.top
+  }
+}
+
 /** 屏幕坐标 → 相对文档内容表面的归一化坐标 (0–1) */
 export function clientToContentPoint(
   clientX: number,
   clientY: number,
   surface: HTMLElement
 ): ShapePoint {
-  const scrollEl = getScrollContainer(surface)
-  const rect = surface.getBoundingClientRect()
   const { width, height } = getContentSize(surface)
-  const x = scrollEl.scrollLeft + (clientX - rect.left)
-  const y = scrollEl.scrollTop + (clientY - rect.top)
+  const { x, y } = clientToContentCoords(clientX, clientY, surface)
   return {
     x: Math.min(1, Math.max(0, x / width)),
     y: Math.min(1, Math.max(0, y / height))
@@ -45,12 +89,7 @@ export function clientToContentPixels(
   clientY: number,
   surface: HTMLElement
 ): { x: number; y: number } {
-  const scrollEl = getScrollContainer(surface)
-  const rect = surface.getBoundingClientRect()
-  return {
-    x: scrollEl.scrollLeft + (clientX - rect.left),
-    y: scrollEl.scrollTop + (clientY - rect.top)
-  }
+  return clientToContentCoords(clientX, clientY, surface)
 }
 
 export function shapeToPixels(

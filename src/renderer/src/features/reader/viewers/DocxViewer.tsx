@@ -1,7 +1,7 @@
 import DOMPurify from 'dompurify'
 import mammoth from 'mammoth'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useAnnotationSurface } from '../../../features/reader/annotations/AnnotationSurfaceContext'
+import { useBindAnnotationSurface } from '../../../features/reader/annotations/useBindAnnotationSurface'
 import { resolveMarkupColor } from '../annotations/annotationMarkup'
 import { applyDomAnnotation, refreshTextMarkup, blockViewerContextMenu, scrollToAnnotationText } from '../annotations/textUtils'
 import { NoteInputModal, SelectionToolbar } from '../../../features/reader/annotations/SelectionToolbar'
@@ -28,15 +28,21 @@ export function DocxViewer({ filePath, isActive = true }: DocxViewerProps): JSX.
   const [showNoteModal, setShowNoteModal] = useState(false)
 
   const contentRef = useRef<HTMLDivElement>(null)
-  const surfaceRef = useRef<HTMLDivElement>(null)
-  const [scrollSurface, setScrollSurface] = useState<HTMLElement | null>(null)
+  const surfaceRef = useRef<HTMLDivElement | null>(null)
+  const bindAnnotationSurface = useBindAnnotationSurface()
   const { annotations, create, remove } = useAnnotations(filePath, isActive)
 
-  useAnnotationSurface(scrollSurface)
+  const bindSurface = useCallback(
+    (el: HTMLDivElement | null) => {
+      surfaceRef.current = el
+      bindAnnotationSurface(isActive ? el : null)
+    },
+    [bindAnnotationSurface, isActive]
+  )
 
   useEffect(() => {
-    setScrollSurface(surfaceRef.current)
-  }, [html, loading])
+    bindAnnotationSurface(isActive ? surfaceRef.current : null)
+  }, [isActive, html, loading, bindAnnotationSurface])
   const { sendToAI, setSelection, annotationTool, focusAnnotationId, setFocusAnnotationId } =
     useWorkspaceStore()
   const drawTool =
@@ -146,7 +152,7 @@ export function DocxViewer({ filePath, isActive = true }: DocxViewerProps): JSX.
   if (error) return <div className="error-state">{error}</div>
 
   return (
-    <div ref={surfaceRef} className="docx-content annotated-viewer">
+    <div ref={bindSurface} className="docx-content annotated-viewer">
       <p style={{ color: 'var(--text-muted)', fontSize: '11px', marginBottom: '16px' }}>
         Word 简化视图 — 选中文本可高亮、便签或 Ask AI
       </p>
