@@ -13,6 +13,99 @@ export interface ContentRect {
 
 export type MarkupRectResolver = (annotation: Annotation) => ContentRect[]
 
+/** 同行文本矩形分组阈值（像素） */
+export const MARKUP_LINE_Y_THRESHOLD = 6
+
+/** 下划线与文本基线的间距 */
+export const UNDERLINE_GAP = 3
+
+/** 下划线粗细 */
+export const UNDERLINE_THICKNESS = 2
+
+function rectsOnSameLine(a: ContentRect, b: ContentRect): boolean {
+  if (Math.abs(a.y - b.y) <= MARKUP_LINE_Y_THRESHOLD) return true
+  const aBottom = a.y + a.height
+  const bBottom = b.y + b.height
+  const overlap = Math.min(aBottom, bBottom) - Math.max(a.y, b.y)
+  const minH = Math.min(a.height, b.height)
+  return overlap > minH * 0.35
+}
+
+/** 将字符级 client rect 按视觉行分组 */
+export function groupContentRectsByLine(rects: ContentRect[]): ContentRect[][] {
+  if (rects.length === 0) return []
+  const sorted = [...rects].sort((a, b) => a.y - b.y || a.x - b.x)
+  const lines: ContentRect[][] = [[sorted[0]]]
+
+  for (let i = 1; i < sorted.length; i++) {
+    const rect = sorted[i]
+    const lastLine = lines[lines.length - 1]
+    if (lastLine.some((existing) => rectsOnSameLine(existing, rect))) {
+      lastLine.push(rect)
+    } else {
+      lines.push([rect])
+    }
+  }
+
+  return lines
+}
+
+/** 单行文本：取最低 bottom，在其下 gap 处画连续横线 */
+export function mergeLineRectsToUnderlineBar(
+  line: ContentRect[],
+  gap = UNDERLINE_GAP,
+  thickness = UNDERLINE_THICKNESS
+): ContentRect {
+  const lineBottom = Math.max(...line.map((r) => r.y + r.height))
+  const left = Math.min(...line.map((r) => r.x))
+  const right = Math.max(...line.map((r) => r.x + r.width))
+  return {
+    x: left,
+    y: lineBottom + gap,
+    width: Math.max(right - left, 2),
+    height: thickness
+  }
+}
+
+/** 单行文本：合并为连续高亮块（覆盖该行 min top ~ max bottom） */
+export function mergeLineRectsToHighlightBar(line: ContentRect[]): ContentRect {
+  const top = Math.min(...line.map((r) => r.y))
+  const bottom = Math.max(...line.map((r) => r.y + r.height))
+  const left = Math.min(...line.map((r) => r.x))
+  const right = Math.max(...line.map((r) => r.x + r.width))
+  return {
+    x: left,
+    y: top,
+    width: Math.max(right - left, 2),
+    height: Math.max(bottom - top, 2)
+  }
+}
+
+/** 高亮：按行合并为连续块，避免中英文混排时逐字断裂 */
+export function mergeContentRectsForHighlight(rects: ContentRect[]): ContentRect[] {
+  return groupContentRectsByLine(rects).map((line) => mergeLineRectsToHighlightBar(line))
+}
+
+/** 下划线：按行合并为连续横条，避免中英文混排时逐字断裂 */
+export function mergeContentRectsForUnderline(
+  rects: ContentRect[],
+  gap = UNDERLINE_GAP,
+  thickness = UNDERLINE_THICKNESS
+): ContentRect[] {
+  return groupContentRectsByLine(rects).map((line) =>
+    mergeLineRectsToUnderlineBar(line, gap, thickness)
+  )
+}
+
+export function prepareMarkupDisplayRects(
+  annotation: Annotation,
+  rects: ContentRect[]
+): ContentRect[] {
+  if (annotation.type === 'underline') return mergeContentRectsForUnderline(rects)
+  if (annotation.type === 'highlight') return mergeContentRectsForHighlight(rects)
+  return rects
+}
+
 /** 将 viewport 矩形转为内容表面像素坐标（与 pen/rect 坐标系一致） */
 export function clientRectToContentRect(clientRect: DOMRect, surface: HTMLElement): ContentRect {
   const contentEl = getContentElement(surface)
@@ -131,10 +224,11 @@ export function hitTestMarkupOverlay(
 
   for (const ann of [...annotations].reverse()) {
     if (ann.type !== 'highlight' && ann.type !== 'underline') continue
-    for (const r of resolveRects(ann)) {
+    const displayRects = prepareMarkupDisplayRects(ann, resolveRects(ann))
+    for (const r of displayRects) {
       const hitY =
         ann.type === 'underline'
-          ? py >= r.y + r.height - 6 && py <= r.y + r.height + 2
+          ? py >= r.y - 4 && py <= r.y + r.height + 4
           : py >= r.y && py <= r.y + r.height
       if (px >= r.x && px <= r.x + r.width && hitY) return ann
     }

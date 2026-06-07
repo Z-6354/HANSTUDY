@@ -35,6 +35,7 @@ export function TitleBar(): JSX.Element {
   const [webPromptError, setWebPromptError] = useState('')
   const [aboutOpen, setAboutOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const chordListenerRef = useRef<((ev: KeyboardEvent) => void) | null>(null)
   const {
     toggleAIPanel,
     showAIPanel,
@@ -155,13 +156,20 @@ export function TitleBar(): JSX.Element {
       }
       if (e.ctrlKey && e.key === 'k') {
         e.preventDefault()
+        if (chordListenerRef.current) {
+          window.removeEventListener('keydown', chordListenerRef.current, true)
+        }
         const onSecond = (ev: KeyboardEvent): void => {
           if (ev.ctrlKey && ev.key.toLowerCase() === 'o') {
             ev.preventDefault()
             void openFolder()
           }
           window.removeEventListener('keydown', onSecond, true)
+          if (chordListenerRef.current === onSecond) {
+            chordListenerRef.current = null
+          }
         }
+        chordListenerRef.current = onSecond
         window.addEventListener('keydown', onSecond, true)
       }
       if (e.ctrlKey && e.key === 'o' && !e.shiftKey) {
@@ -191,7 +199,13 @@ export function TitleBar(): JSX.Element {
       }
     }
     window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      if (chordListenerRef.current) {
+        window.removeEventListener('keydown', chordListenerRef.current, true)
+        chordListenerRef.current = null
+      }
+    }
   }, [toggleAIPanel, openSettings, toggleLayoutPanel, setSidebarTab, showSidebar, dispatchViewerCommand])
 
   const renderMenuItem = (item: MenuItem, parentKey: string): JSX.Element => {

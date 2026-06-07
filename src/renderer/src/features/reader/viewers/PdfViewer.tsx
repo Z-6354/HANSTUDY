@@ -3,7 +3,10 @@ import * as pdfjsLib from 'pdfjs-dist'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toUint8Array } from '@shared/binary'
 import { IconButton } from '../../../components/IconButton'
-import { useAnnotationPortalRefresh } from '../annotations/AnnotationSurfaceContext'
+import {
+  useAnnotationMarkupLayoutBump,
+  useAnnotationPortalRefresh
+} from '../annotations/AnnotationSurfaceContext'
 import { useBindAnnotationSurface } from '../annotations/useBindAnnotationSurface'
 import { NoteInputModal, SelectionToolbar } from '../annotations/SelectionToolbar'
 import { resolveMarkupColor } from '../annotations/annotationMarkup'
@@ -40,6 +43,7 @@ import {
   isZoomPreviewing,
   LAZY_ROOT_MARGIN,
   MAX_CONCURRENT_PAGE_RENDERS,
+  normalizeWheelDelta,
   previewScaleRatio,
   SCALE_COMMIT_DEBOUNCE_MS,
   WHEEL_ZOOM_STEP
@@ -119,6 +123,7 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
   const previewRatio = previewScaleRatio(displayScale, scale)
 
   const refreshAnnotationPortal = useAnnotationPortalRefresh()
+  const bumpMarkupLayout = useAnnotationMarkupLayoutBump()
   const bindAnnotationSurface = useBindAnnotationSurface()
 
   const bindPagesRoot = useCallback(
@@ -179,7 +184,8 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
   const { selection: domSelection, clearSelection: clearDomSelection } = useDomTextSelection(
     filePath,
     containerRef,
-    textSelectEnabled
+    textSelectEnabled,
+    'pdf'
   )
   useDomAnnotationToolUndo(annotations, remove, containerRef, isActive && !loading)
   useDomFind(containerRef.current, isActive && !loading)
@@ -331,10 +337,30 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
   const isActiveRef = useRef(isActive)
   isActiveRef.current = isActive
 
-  const notifyAnnotationLayout = useCallback((): void => {
+  const notifyAnnotationResize = useCallback((): void => {
     pagesRootRef.current?.dispatchEvent(new Event(ANNOTATION_SURFACE_RESIZE_EVENT))
+    bumpMarkupLayout()
+  }, [bumpMarkupLayout])
+
+  const flushZoomPreview = useCallback((): void => {
+    if (!isZoomPreviewRef.current && scaleCommitTimerRef.current == null) return
+    if (scaleCommitTimerRef.current) {
+      clearTimeout(scaleCommitTimerRef.current)
+      scaleCommitTimerRef.current = null
+    }
+    isZoomPreviewRef.current = false
+    const committed = clampPdfScale(displayScaleRef.current)
+    displayScaleRef.current = committed
+    setDisplayScale(committed)
+    if (Math.abs(committed - scaleRef.current) > 0.001) {
+      setScale(committed)
+    }
+  }, [])
+
+  const notifyAnnotationLayout = useCallback((): void => {
+    notifyAnnotationResize()
     refreshAnnotationPortal()
-  }, [refreshAnnotationPortal])
+  }, [notifyAnnotationResize, refreshAnnotationPortal])
 
   const resolveZoomOrigin = useCallback((clientX: number, clientY: number): string => {
     const container = containerRef.current
@@ -663,8 +689,9 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
 
   useEffect(() => {
     if (!layoutReady) return
-    notifyAnnotationLayout()
-  }, [textAnnotations, layoutReady, notifyAnnotationLayout])
+    flushZoomPreview()
+    notifyAnnotationResize()
+  }, [textAnnotations, layoutReady, flushZoomPreview, notifyAnnotationResize])
 
   useEffect(() => {
     const container = containerRef.current
@@ -715,6 +742,7 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
   useEffect(() => {
     const handleWheel = (e: WheelEvent): void => {
       if (!e.ctrlKey) return
+      if (e.target instanceof Element && e.target.closest('.annotation-overlay-interactive')) return
       e.preventDefault()
 
       wheelAccumRef.current.deltaY += e.deltaY
@@ -727,6 +755,9 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
         wheelRafRef.current = null
         const acc = wheelAccumRef.current
         wheelAccumRef.current = { deltaY: 0, deltaMode: 0, clientX: 0, clientY: 0 }
+
+        const normalized = normalizeWheelDelta(acc.deltaY, acc.deltaMode)
+        if (Math.abs(normalized) < 4) return
 
         const next = applyWheelZoom(displayScaleRef.current, acc.deltaY, acc.deltaMode)
         if (Math.abs(next - displayScaleRef.current) < 0.0001) return
@@ -775,6 +806,7 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
     const container = containerRef.current
     if (!container || loading) return
 
+    let cancelled = false
     container.querySelectorAll('.pdf-pin').forEach((el) => el.remove())
 
     pdfNotes.forEach((note) => {
@@ -782,6 +814,7 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
       const pageNo = note.pdfAnchor.page
       const generation = renderGenerationRef.current
       void ensurePageRendered(pageNo, generation).then(() => {
+        if (cancelled || generation !== renderGenerationRef.current) return
         const pageWrap = container.querySelector<HTMLElement>(
           `.pdf-page-wrap[data-page="${pageNo}"]`
         )
@@ -807,6 +840,11 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
         pageWrap.appendChild(pin)
       })
     })
+
+    return () => {
+      cancelled = true
+      container.querySelectorAll('.pdf-pin').forEach((el) => el.remove())
+    }
   }, [loading, pdfNotes, expandedNoteId, ensurePageRendered])
 
   const closeToolbar = useCallback((): void => {

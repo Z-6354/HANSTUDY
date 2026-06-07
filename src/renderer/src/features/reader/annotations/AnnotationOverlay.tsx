@@ -4,6 +4,7 @@ import type { Annotation, DrawShape, ShapePoint } from '../../../types/global.d'
 import { resolveStoredMarkupColor } from './annotationMarkup'
 import {
   hitTestMarkupOverlay,
+  prepareMarkupDisplayRects,
   resolveAllMarkupRects,
   resolveDefaultMarkupRects,
   type ContentRect,
@@ -114,17 +115,17 @@ function renderMarkupRects(
 ): JSX.Element[] {
   const color = resolveStoredMarkupColor(annotation)
   const opacity = focused ? 0.95 : 0.85
+  const displayRects = prepareMarkupDisplayRects(annotation, rects)
 
-  return rects.map((r, index) => {
+  return displayRects.map((r, index) => {
     if (annotation.type === 'underline') {
-      const y = r.y + r.height - 2
       return (
         <rect
           key={`${annotation.id}-${index}`}
           x={r.x}
-          y={y}
+          y={r.y}
           width={r.width}
-          height={2}
+          height={r.height}
           fill={color}
           opacity={opacity}
           className="annotation-markup-underline"
@@ -227,7 +228,7 @@ export function AnnotationOverlay({
     const ro = new ResizeObserver(updateSize)
     ro.observe(surface)
     const mo = new MutationObserver(updateSize)
-    mo.observe(surface, { childList: true, subtree: true, attributes: true })
+    mo.observe(surface, { childList: true, subtree: true })
     scrollEl.addEventListener('scroll', updateSize, { passive: true })
     surface.addEventListener(ANNOTATION_SURFACE_RESIZE_EVENT, updateSize)
     window.addEventListener('resize', updateSize)
@@ -455,6 +456,17 @@ export function AnnotationOverlay({
       surface.classList.remove('annotation-drawing-surface', 'annotation-eraser-surface')
     }
   }, [interactive, annotationTool, surface])
+
+  useEffect(() => {
+    if (!interactive) return
+    const blockCtrlWheel = (e: WheelEvent): void => {
+      if (!e.ctrlKey) return
+      e.preventDefault()
+      e.stopPropagation()
+    }
+    surface.addEventListener('wheel', blockCtrlWheel, { passive: false, capture: true })
+    return () => surface.removeEventListener('wheel', blockCtrlWheel, { capture: true })
+  }, [interactive, surface])
 
   const draftElement = ((): JSX.Element | null => {
     if (!draft || size.width <= 0 || size.height <= 0) return null

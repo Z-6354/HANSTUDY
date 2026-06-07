@@ -11,11 +11,15 @@ export interface DomTextSelectionState {
 }
 
 import { buildDomSelectionKey } from './selectionKey'
+import { normalizePdfWindowSelection } from './pdfTextSelection'
+
+export type DomTextSelectionMode = 'default' | 'pdf'
 
 export function useDomTextSelection(
   docPath: string,
   containerRef: React.RefObject<HTMLElement | null>,
-  enabled = true
+  enabled = true,
+  mode: DomTextSelectionMode = 'default'
 ): {
   selection: DomTextSelectionState | null
   clearSelection: () => void
@@ -39,9 +43,15 @@ export function useDomTextSelection(
     const handleMouseUp = (): void => {
       const sel = window.getSelection()
       if (!sel || sel.isCollapsed || !sel.rangeCount) return
-      const text = sel.toString().replace(/\r\n/g, '\n')
+
+      const normalized =
+        mode === 'pdf' ? normalizePdfWindowSelection(sel) : null
+
+      const range = normalized?.range ?? sel.getRangeAt(0).cloneRange()
+      const text = (
+        normalized?.text ?? range.toString().replace(/\r\n/g, '\n')
+      )
       if (!text.trim()) return
-      const range = sel.getRangeAt(0)
       if (!container.contains(range.commonAncestorContainer)) return
       const key = buildDomSelectionKey(docPath, text, range)
       if (consumedKeysRef.current.has(key)) return
@@ -50,7 +60,7 @@ export function useDomTextSelection(
         context: { docPath, text },
         rect,
         key,
-        domRange: range.cloneRange()
+        domRange: range
       })
     }
 
@@ -67,7 +77,7 @@ export function useDomTextSelection(
       container.removeEventListener('mouseup', handleMouseUp)
       document.removeEventListener('mousedown', handleMouseDown)
     }
-  }, [docPath, containerRef, enabled])
+  }, [docPath, containerRef, enabled, mode])
 
   const clearSelectionAndConsume = useCallback((): void => {
     if (selection?.key) consumedKeysRef.current.add(selection.key)

@@ -4,6 +4,10 @@ import type { Annotation } from '../src/shared/types'
 import {
   clientRectToContentRect,
   hitTestMarkupOverlay,
+  mergeContentRectsForHighlight,
+  mergeContentRectsForUnderline,
+  mergeLineRectsToHighlightBar,
+  mergeLineRectsToUnderlineBar,
   resolveDomMarkupRects
 } from '../src/renderer/src/features/reader/annotations/markupOverlayUtils'
 
@@ -70,6 +74,84 @@ describe('markupOverlayUtils', () => {
 
     expect(hitTestMarkupOverlay([ann], 50, 20, surface, resolver)).toEqual(ann)
     expect(hitTestMarkupOverlay([ann], 5, 5, surface, resolver)).toBeUndefined()
+
+    document.body.removeChild(surface)
+  })
+
+  it('mergeContentRectsForUnderline draws one bar per line at lowest bottom', () => {
+    const mixedLine = [
+      { x: 10, y: 20, width: 14, height: 18 },
+      { x: 26, y: 24, width: 20, height: 12 },
+      { x: 48, y: 22, width: 16, height: 14 }
+    ]
+    const [bar] = mergeContentRectsForUnderline(mixedLine)
+    expect(bar.x).toBe(10)
+    expect(bar.width).toBe(54)
+    expect(bar.y).toBe(20 + 18 + 3)
+    expect(bar.height).toBe(2)
+
+    const twoLines = [
+      ...mixedLine,
+      { x: 10, y: 50, width: 30, height: 16 }
+    ]
+    const bars = mergeContentRectsForUnderline(twoLines)
+    expect(bars).toHaveLength(2)
+    expect(bars[1].y).toBe(50 + 16 + 3)
+  })
+
+  it('mergeContentRectsForHighlight merges mixed-height chars into one block per line', () => {
+    const mixedLine = [
+      { x: 10, y: 20, width: 14, height: 18 },
+      { x: 26, y: 24, width: 20, height: 12 },
+      { x: 48, y: 22, width: 16, height: 14 }
+    ]
+    const [block] = mergeContentRectsForHighlight(mixedLine)
+    expect(block).toEqual({
+      x: 10,
+      y: 20,
+      width: 54,
+      height: 18
+    })
+
+    const bar = mergeLineRectsToHighlightBar(mixedLine)
+    expect(bar.height).toBe(20 + 18 - 20)
+  })
+
+  it('hitTestMarkupOverlay uses merged highlight blocks', () => {
+    const surface = document.createElement('div')
+    document.body.appendChild(surface)
+    surface.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 200, height: 100 }) as DOMRect
+
+    const ann = baseAnn({ id: 'h1', type: 'highlight', selectedText: 'test' })
+    const charRects = [
+      { x: 10, y: 20, width: 8, height: 16 },
+      { x: 18, y: 24, width: 10, height: 12 }
+    ]
+    const block = mergeLineRectsToHighlightBar(charRects)
+    const resolver = () => charRects
+
+    expect(hitTestMarkupOverlay([ann], block.x + 5, block.y + 5, surface, resolver)).toEqual(ann)
+
+    document.body.removeChild(surface)
+  })
+
+  it('hitTestMarkupOverlay uses merged underline bars', () => {
+    const surface = document.createElement('div')
+    document.body.appendChild(surface)
+    surface.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 200, height: 100 }) as DOMRect
+
+    const ann = baseAnn({ id: 'u1', type: 'underline', selectedText: 'test' })
+    const charRects = [
+      { x: 10, y: 20, width: 8, height: 16 },
+      { x: 18, y: 24, width: 10, height: 12 }
+    ]
+    const bar = mergeLineRectsToUnderlineBar(charRects)
+    const resolver = () => charRects
+
+    expect(hitTestMarkupOverlay([ann], bar.x + 5, bar.y + 1, surface, resolver)).toEqual(ann)
+    expect(hitTestMarkupOverlay([ann], bar.x + 5, 20, surface, resolver)).toBeUndefined()
 
     document.body.removeChild(surface)
   })

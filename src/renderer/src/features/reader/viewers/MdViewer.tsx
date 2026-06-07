@@ -75,6 +75,7 @@ export function MdViewer({ filePath, isActive = true }: MdViewerProps): JSX.Elem
   const monacoRef = useRef<typeof MonacoApi | null>(null)
   const monacoSurfaceRef = useRef<HTMLElement | null>(null)
   const monacoApplyingRef = useRef(false)
+  const selectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const bindAnnotationSurface = useBindAnnotationSurface()
 
   const { annotations, create, remove } = useAnnotations(filePath, isActive)
@@ -350,9 +351,19 @@ export function MdViewer({ filePath, isActive = true }: MdViewerProps): JSX.Elem
     const editor = editorRef.current
     if (!editor || viewMode !== 'source') return
     const disposable = editor.onMouseUp(() => {
-      setTimeout(() => captureMonacoSelection(), 10)
+      if (selectionTimerRef.current != null) clearTimeout(selectionTimerRef.current)
+      selectionTimerRef.current = setTimeout(() => {
+        selectionTimerRef.current = null
+        captureMonacoSelection()
+      }, 10)
     })
-    return () => disposable.dispose()
+    return () => {
+      disposable.dispose()
+      if (selectionTimerRef.current != null) {
+        clearTimeout(selectionTimerRef.current)
+        selectionTimerRef.current = null
+      }
+    }
   }, [viewMode, captureMonacoSelection, monacoMounted])
 
   const switchMode = (mode: MdViewMode): void => {
@@ -419,7 +430,8 @@ export function MdViewer({ filePath, isActive = true }: MdViewerProps): JSX.Elem
               scrollBeyondLastLine: false,
               renderLineHighlight: 'none',
               contextmenu: false,
-              automaticLayout: true
+              automaticLayout: true,
+              mouseWheelZoom: false
             }}
           />
         </div>

@@ -1,5 +1,6 @@
 import type { Annotation, TextRange } from '@shared/types'
 import { resolveStoredMarkupColor, FALLBACK_HIGHLIGHT } from './annotationMarkup'
+import { findPdfTextRangeInTextLayer } from './pdfTextSelection'
 import { toolUsesRightClickUndo } from './annotationToolUtils'
 import { useWorkspaceStore } from '../../../stores/workspaceStore'
 
@@ -133,14 +134,28 @@ function searchTextVariants(text: string): string[] {
   const variants = new Set<string>()
   variants.add(text)
   variants.add(text.replace(/\r\n/g, '\n'))
-  variants.add(text.replace(/\s+/g, ' ').trim())
-  variants.add(text.replace(/\n+/g, ''))
-  variants.add(text.replace(/\s+/g, ''))
+  if (!text.includes('\n')) {
+    variants.add(text.replace(/\s+/g, ' ').trim())
+    variants.add(text.replace(/\n+/g, ''))
+    variants.add(text.replace(/\s+/g, ''))
+  } else {
+    variants.add(
+      text
+        .split('\n')
+        .map((line) => line.replace(/\s+/g, ' ').trim())
+        .join('\n')
+    )
+  }
   return Array.from(variants).filter((v) => v.length > 0)
 }
 
 export function findTextRangeInRoot(root: HTMLElement, selectedText: string): Range | null {
   if (!selectedText.trim()) return null
+  const textLayer = root.querySelector('.textLayer')
+  if (textLayer instanceof HTMLElement) {
+    const pdfRange = findPdfTextRangeInTextLayer(textLayer, selectedText)
+    if (pdfRange) return pdfRange
+  }
   const { fullText, segments } = collectTextSegments(root)
   if (!segments.length) return null
   for (const attempt of searchTextVariants(selectedText)) {
@@ -501,7 +516,7 @@ export function scrollToAnnotationText(root: HTMLElement, selectedText: string):
   if (rect.height <= 0) return false
   const scrollHost = root.closest('.annotated-viewer') ?? root
   scrollHost.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-  ;(domRange.startContainer.parentElement ?? root).scrollIntoView({ behavior: 'smooth', block: 'center' })
+  ;(domRange.startContainer.parentElement ?? root).scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   return true
 }
 

@@ -16,7 +16,7 @@ export function useAnnotations(docPath: string, enabled = true): {
   const [error, setError] = useState<string | null>(null)
   const annotationTick = useWorkspaceStore((s) => s.annotationTick)
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (signal?: { cancelled: boolean }) => {
     if (!enabled || !docPath || docPath === '__none__') {
       setAnnotations([])
       setError(null)
@@ -27,12 +27,14 @@ export function useAnnotations(docPath: string, enabled = true): {
     setError(null)
     try {
       const items = await window.api.annotations.list(docPath)
+      if (signal?.cancelled) return
       setAnnotations(items)
     } catch (err) {
+      if (signal?.cancelled) return
       setError(err instanceof Error ? err.message : '加载标注失败')
       setAnnotations([])
     } finally {
-      setLoading(false)
+      if (!signal?.cancelled) setLoading(false)
     }
   }, [docPath, enabled])
 
@@ -42,7 +44,11 @@ export function useAnnotations(docPath: string, enabled = true): {
       setLoading(false)
       return
     }
-    refresh()
+    const signal = { cancelled: false }
+    void refresh(signal)
+    return () => {
+      signal.cancelled = true
+    }
   }, [refresh, annotationTick, enabled])
 
   const create = useCallback(

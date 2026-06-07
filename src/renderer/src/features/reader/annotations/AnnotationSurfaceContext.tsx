@@ -9,6 +9,8 @@ interface AnnotationSurfaceContextValue {
   registerMarkupResolver: (fn: MarkupRectResolver | null) => void
   getMarkupResolver: () => MarkupRectResolver | null
   markupLayoutKey: number
+  /** 仅刷新覆盖层布局，不 remount portal */
+  bumpMarkupLayout: () => void
   refreshPortal: () => void
 }
 
@@ -27,6 +29,12 @@ export function useAnnotationSurface(surface: HTMLElement | null): void {
 export function useAnnotationPortalRefresh(): () => void {
   const ctx = useContext(AnnotationSurfaceContext)
   return ctx?.refreshPortal ?? (() => {})
+}
+
+/** 文本标注增删时轻量刷新覆盖层矩形，避免 remount 引发布局抖动 */
+export function useAnnotationMarkupLayoutBump(): () => void {
+  const ctx = useContext(AnnotationSurfaceContext)
+  return ctx?.bumpMarkupLayout ?? (() => {})
 }
 
 interface AnnotatedViewerShellProps {
@@ -56,6 +64,10 @@ export function AnnotatedViewerShell({
 
   const getMarkupResolver = useCallback(() => markupResolverRef.current, [])
 
+  const bumpMarkupLayout = useCallback(() => {
+    setMarkupLayoutKey((key) => key + 1)
+  }, [])
+
   const refreshPortal = useCallback(() => {
     setPortalKey((key) => key + 1)
     setMarkupLayoutKey((key) => key + 1)
@@ -67,9 +79,17 @@ export function AnnotatedViewerShell({
       registerMarkupResolver,
       getMarkupResolver,
       markupLayoutKey,
+      bumpMarkupLayout,
       refreshPortal
     }),
-    [registerSurface, registerMarkupResolver, getMarkupResolver, markupLayoutKey, refreshPortal]
+    [
+      registerSurface,
+      registerMarkupResolver,
+      getMarkupResolver,
+      markupLayoutKey,
+      bumpMarkupLayout,
+      refreshPortal
+    ]
   )
 
   return (

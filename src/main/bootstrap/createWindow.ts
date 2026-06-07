@@ -47,6 +47,13 @@ export function createMainWindow(): BrowserWindow {
     return { action: 'deny' }
   })
 
+  // 阻止系统级 F11 全屏；专注模式由渲染进程处理
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && input.key === 'F11') {
+      event.preventDefault()
+    }
+  })
+
   win.webContents.on('will-attach-webview', (_event, webPreferences) => {
     webPreferences.nodeIntegration = false
     webPreferences.contextIsolation = true

@@ -32,6 +32,7 @@ export function TxtViewer({ filePath, isActive = true }: TxtViewerProps): JSX.El
   const monacoRef = useRef<typeof MonacoApi | null>(null)
   const surfaceRef = useRef<HTMLElement | null>(null)
   const monacoApplyingRef = useRef(false)
+  const selectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const bindAnnotationSurface = useBindAnnotationSurface()
 
   const { annotations, create, remove } = useAnnotations(filePath, isActive)
@@ -230,9 +231,19 @@ export function TxtViewer({ filePath, isActive = true }: TxtViewerProps): JSX.El
     const editor = editorRef.current
     if (!editor) return
     const disposable = editor.onMouseUp(() => {
-      setTimeout(() => captureSelection(), 10)
+      if (selectionTimerRef.current != null) clearTimeout(selectionTimerRef.current)
+      selectionTimerRef.current = setTimeout(() => {
+        selectionTimerRef.current = null
+        captureSelection()
+      }, 10)
     })
-    return () => disposable.dispose()
+    return () => {
+      disposable.dispose()
+      if (selectionTimerRef.current != null) {
+        clearTimeout(selectionTimerRef.current)
+        selectionTimerRef.current = null
+      }
+    }
   }, [captureSelection, monacoMounted])
 
   if (loading) return <div className="loading-state">加载中...</div>
@@ -264,7 +275,8 @@ export function TxtViewer({ filePath, isActive = true }: TxtViewerProps): JSX.El
           scrollBeyondLastLine: false,
           renderLineHighlight: 'none',
           contextmenu: false,
-          automaticLayout: true
+          automaticLayout: true,
+          mouseWheelZoom: false
         }}
       />
 

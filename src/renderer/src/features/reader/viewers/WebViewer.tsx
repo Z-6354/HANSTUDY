@@ -341,6 +341,10 @@ export function WebViewer({ url, docId, isActive }: WebViewerProps): JSX.Element
     return () => {
       ro.disconnect()
       window.removeEventListener('resize', syncBounds)
+      if (syncBoundsRafRef.current != null) {
+        cancelAnimationFrame(syncBoundsRafRef.current)
+        syncBoundsRafRef.current = null
+      }
     }
   }, [syncBounds, runAttach])
 
