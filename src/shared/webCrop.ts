@@ -127,6 +127,21 @@ export function webDisplayName(url: string): string {
   }
 }
 
+/** 用于历史/标签去重与匹配（忽略 hash、末尾斜杠） */
+export function webUrlKey(url: string): string {
+  const normalized = normalizeWebUrl(url) ?? url.trim()
+  try {
+    const parsed = new URL(normalized)
+    parsed.hash = ''
+    if (parsed.pathname !== '/' && parsed.pathname.endsWith('/')) {
+      parsed.pathname = parsed.pathname.slice(0, -1)
+    }
+    return parsed.href
+  } catch {
+    return normalized
+  }
+}
+
 export function computeWebCropScale(viewportWidth: number, crop: WebHorizontalCrop): number {
   const span = Math.max(crop.right - crop.left, WEB_CROP_MIN_SPAN)
   return viewportWidth / (span * WEB_PAGE_LAYOUT_WIDTH)

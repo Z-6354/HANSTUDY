@@ -3,8 +3,10 @@ import { useCallback, useEffect, useState } from 'react'
 import { IconButton } from '../../components/IconButton'
 import { PathTooltipItem } from '../../components/PathTooltipItem'
 import type { FileEntry } from '../../types/global.d'
-import { useWorkspaceStore } from '../../stores/workspaceStore'
-import { SETTINGS_DOC_PATH } from '../../stores/workspaceStore'
+import { webUrlKey } from '@shared/webCrop'
+import { isRecordableWebUrl, webDisplayTitle } from '@shared/webLibrary'
+import { useWebLibraryStore } from '../../stores/webLibraryStore'
+import { useWorkspaceStore, SETTINGS_DOC_PATH } from '../../stores/workspaceStore'
 import { FileTypeIcon } from '../../utils/fileIcons'
 import { ConfirmModal, PromptModal } from './PromptModal'
 import { WebSnapshotsSection } from './WebSnapshotsSection'
@@ -99,10 +101,12 @@ export function FileExplorer(): JSX.Element {
     activeDocumentId,
     documents,
     openDocument,
+    openWebPage,
     setRootFolder,
     closeDocument,
     closeOtherDocuments
   } = useWorkspaceStore()
+  const { history, loaded: webLibraryLoaded, load: loadWebLibrary } = useWebLibraryStore()
 
   const [entries, setEntries] = useState<FileEntry[]>([])
   const [refreshKey, setRefreshKey] = useState(0)
@@ -132,6 +136,10 @@ export function FileExplorer(): JSX.Element {
   useEffect(() => {
     refresh()
   }, [refresh])
+
+  useEffect(() => {
+    if (!webLibraryLoaded) void loadWebLibrary()
+  }, [webLibraryLoaded, loadWebLibrary])
 
   useEffect(() => {
     const closeMenu = (e: MouseEvent): void => {
@@ -351,13 +359,22 @@ export function FileExplorer(): JSX.Element {
             <span>最近打开</span>
           </div>
           {recentFiles.map((path) => {
-            const name = path.split(/[/\\]/).pop() ?? path
+            const name = isRecordableWebUrl(path)
+              ? webDisplayTitle(
+                  history.find((h) => webUrlKey(h.url) === webUrlKey(path))?.title ?? '',
+                  path
+                )
+              : (path.split(/[/\\]/).pop() ?? path)
             return (
               <PathTooltipItem
                 key={path}
                 path={path}
                 className={`file-tree-item ${activePath === path ? 'active' : ''}`}
                 onClick={async () => {
+                  if (isRecordableWebUrl(path)) {
+                    openWebPage(path)
+                    return
+                  }
                   const info = await window.api.fs.getFileInfo(path)
                   if (info.supported) openDocument(info)
                 }}

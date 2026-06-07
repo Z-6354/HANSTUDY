@@ -10,7 +10,16 @@ import type {
   WebHistoryEntry,
   WebPhoneEntry
 } from '../../shared/webLibrary'
-import { WEB_HISTORY_MAX, WEB_PHONE_MAX, credentialsOriginMatch, isRecordableWebUrl, normalizePhoneNumber, webPageOrigin } from '../../shared/webLibrary'
+import { webUrlKey } from '../../shared/webCrop'
+import {
+  WEB_HISTORY_MAX,
+  WEB_PHONE_MAX,
+  credentialsOriginMatch,
+  isRecordableWebUrl,
+  normalizePhoneNumber,
+  resolveWebPageTitle,
+  webPageOrigin
+} from '../../shared/webLibrary'
 
 const ENC_PREFIX = 'enc:'
 const B64_PREFIX = 'b64:'
@@ -101,13 +110,18 @@ export async function listWebHistory(): Promise<WebHistoryEntry[]> {
 export async function addWebHistory(url: string, title: string): Promise<WebHistoryEntry[]> {
   if (!isRecordableWebUrl(url)) return (await loadFile()).history
   const data = await loadFile()
+  const key = webUrlKey(url)
+  const previous = data.history.find((h) => webUrlKey(h.url) === key)
   const entry: WebHistoryEntry = {
     id: randomUUID(),
     url,
-    title: title.trim() || url,
+    title: resolveWebPageTitle(title, url, previous?.title),
     visitedAt: new Date().toISOString()
   }
-  data.history = [entry, ...data.history.filter((h) => h.url !== url)].slice(0, WEB_HISTORY_MAX)
+  data.history = [entry, ...data.history.filter((h) => webUrlKey(h.url) !== key)].slice(
+    0,
+    WEB_HISTORY_MAX
+  )
   await saveFile(data)
   return data.history
 }
@@ -133,16 +147,18 @@ export async function listWebBookmarks(): Promise<WebBookmark[]> {
 export async function addWebBookmark(url: string, title: string): Promise<WebBookmark[]> {
   if (!isRecordableWebUrl(url)) return (await loadFile()).bookmarks
   const data = await loadFile()
-  const existing = data.bookmarks.find((b) => b.url === url)
+  const key = webUrlKey(url)
+  const existing = data.bookmarks.find((b) => webUrlKey(b.url) === key)
   if (existing) {
-    existing.title = title.trim() || existing.title
+    const nextTitle = resolveWebPageTitle(title, url, existing.title)
+    if (nextTitle) existing.title = nextTitle
     await saveFile(data)
     return data.bookmarks
   }
   data.bookmarks.unshift({
     id: randomUUID(),
     url,
-    title: title.trim() || url,
+    title: resolveWebPageTitle(title, url),
     createdAt: new Date().toISOString()
   })
   await saveFile(data)

@@ -69,14 +69,36 @@ export function isRecordableWebUrl(url: string): boolean {
   }
 }
 
-export function webDisplayTitle(title: string, url: string): string {
+/** 是否为真实页面标题（非 URL、非域名占位） */
+export function isUsableWebPageTitle(title: string | undefined | null, url: string): boolean {
   const trimmed = title?.trim()
-  if (trimmed && trimmed !== url) return trimmed
+  if (!trimmed) return false
+  if (trimmed === url.trim()) return false
+  if (/^https?:\/\//i.test(trimmed)) return false
   try {
-    return new URL(url).hostname
+    const parsed = new URL(trimmed)
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return false
   } catch {
-    return url
+    /* 非 URL 字符串 */
   }
+  return true
+}
+
+/** 写入历史/收藏时解析标题，保留已有有效标题 */
+export function resolveWebPageTitle(
+  title: string,
+  url: string,
+  previousTitle?: string
+): string {
+  if (isUsableWebPageTitle(title, url)) return title.trim()
+  if (isUsableWebPageTitle(previousTitle, url)) return previousTitle!.trim()
+  return ''
+}
+
+/** 侧栏/标签展示：仅显示页面标题，无标题时用「网页」 */
+export function webDisplayTitle(title: string, url: string): string {
+  if (isUsableWebPageTitle(title, url)) return title.trim()
+  return '网页'
 }
 
 /** 从用户输入提取并规范化手机号（优先中国大陆 11 位） */

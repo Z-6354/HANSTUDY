@@ -4,6 +4,7 @@ import { pushDebugEvent } from '@shared/webDiagnostics'
 import type { WebGuestBounds, WebGuestEvent } from '@shared/webGuest'
 import { isRecordableWebUrl } from '@shared/webLibrary'
 import { resolveWebInput, webDisplayName } from '@shared/webCrop'
+import { isUsableWebPageTitle, webDisplayTitle } from '@shared/webLibrary'
 import { IconButton } from '../../../components/IconButton'
 import { useAppSettingsStore } from '../../../stores/appSettingsStore'
 import { useWebLibraryStore } from '../../../stores/webLibraryStore'
@@ -101,6 +102,7 @@ export function WebViewer({ url, docId, isActive }: WebViewerProps): JSX.Element
   const recordVisit = useCallback(
     (visitUrl: string, visitTitle: string): void => {
       if (!isRecordableWebUrl(visitUrl)) return
+      if (!isUsableWebPageTitle(visitTitle, visitUrl)) return
       if (lastRecordedUrlRef.current === visitUrl) return
       lastRecordedUrlRef.current = visitUrl
       void addHistory(visitUrl, visitTitle)
@@ -243,6 +245,15 @@ export function WebViewer({ url, docId, isActive }: WebViewerProps): JSX.Element
   useEffect(() => {
     titleRef.current = title
   }, [title])
+
+  useEffect(() => {
+    if (!isUsableWebPageTitle(title, currentUrl)) return
+    const display = webDisplayTitle(title, currentUrl)
+    const doc = useWorkspaceStore.getState().documents.find((d) => d.id === docId)
+    if (doc?.type === 'web' && doc.name !== display) {
+      useWorkspaceStore.getState().renameDocument(docId, display)
+    }
+  }, [title, currentUrl, docId])
 
   useEffect(() => {
     const startUrl = resolveWebInput(url, searchEngine) ?? url

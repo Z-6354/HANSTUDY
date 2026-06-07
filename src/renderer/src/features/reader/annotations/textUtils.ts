@@ -377,6 +377,122 @@ export function findLastTextMarkupAnnotation(
   return [...annotations].reverse().find((a) => a.type === type && a.selectedText)
 }
 
+const MARKUP_HIT_SELECTOR =
+  'mark.annotation-highlight, u.annotation-underline, .textLayer span.annotation-highlight, .textLayer span.annotation-underline, .monaco-editor .view-line span.annotation-highlight, .monaco-editor .view-line span.annotation-underline'
+
+function isOverlayHitTarget(el: Element): boolean {
+  return !!el.closest('.annotation-overlay-layer, .annotation-overlay-mount')
+}
+
+function markupClassForElement(el: HTMLElement): 'annotation-highlight' | 'annotation-underline' | null {
+  if (el.classList.contains('annotation-highlight') || el.tagName === 'MARK') {
+    return 'annotation-highlight'
+  }
+  if (el.classList.contains('annotation-underline') || el.tagName === 'U') {
+    return 'annotation-underline'
+  }
+  return null
+}
+
+function isMarkupClassElement(el: Element, cls: string): boolean {
+  return (
+    el instanceof HTMLElement &&
+    (el.classList.contains(cls) ||
+      (cls === 'annotation-highlight' && el.tagName === 'MARK') ||
+      (cls === 'annotation-underline' && el.tagName === 'U'))
+  )
+}
+
+function expandMarkupText(el: HTMLElement): string {
+  const cls = markupClassForElement(el)
+  if (!cls) return el.textContent ?? ''
+  if (el.tagName === 'MARK' || el.tagName === 'U') return el.textContent ?? ''
+
+  const parent = el.parentElement
+  if (!parent) return el.textContent ?? ''
+
+  const siblings = Array.from(parent.children)
+  const idx = siblings.indexOf(el)
+  if (idx < 0) return el.textContent ?? ''
+
+  let text = ''
+  for (let i = idx; i >= 0; i--) {
+    const s = siblings[i]
+    if (!isMarkupClassElement(s, cls)) break
+    text = (s.textContent ?? '') + text
+  }
+  for (let i = idx + 1; i < siblings.length; i++) {
+    const s = siblings[i]
+    if (!isMarkupClassElement(s, cls)) break
+    text += s.textContent ?? ''
+  }
+  return text
+}
+
+export function normalizeMarkupFragment(text: string): string {
+  return text.replace(/\s+/g, ' ').trim()
+}
+
+/** 根据 DOM 片段文本匹配高亮/下划线标注（逆序取最近一条） */
+export function matchMarkupAnnotation(
+  annotations: Annotation[],
+  fragment: string
+): Annotation | undefined {
+  const norm = normalizeMarkupFragment(fragment)
+  if (!norm) return undefined
+
+  const candidates = [...annotations]
+    .reverse()
+    .filter((a) => (a.type === 'highlight' || a.type === 'underline') && a.selectedText)
+
+  for (const a of candidates) {
+    const sel = normalizeMarkupFragment(a.selectedText!)
+    const exact = sel === norm
+    const fragmentInSelection = sel.includes(norm) && norm.length >= 2
+    const selectionInFragment = norm.includes(sel) && sel.length >= 2
+    if (exact || fragmentInSelection || selectionInFragment) return a
+  }
+
+  return undefined
+}
+
+function collectElementsAtPoint(doc: Document, clientX: number, clientY: number): Element[] {
+  if (typeof doc.elementsFromPoint === 'function') {
+    return doc.elementsFromPoint(clientX, clientY)
+  }
+  const hit = doc.elementFromPoint(clientX, clientY)
+  return hit ? [hit] : []
+}
+
+/** 穿透绘图层，查找点击位置下的高亮/下划线 DOM 元素 */
+export function findMarkupElementAtPoint(
+  root: HTMLElement,
+  clientX: number,
+  clientY: number
+): HTMLElement | null {
+  const doc = root.ownerDocument
+  for (const el of collectElementsAtPoint(doc, clientX, clientY)) {
+    if (!(el instanceof Element)) continue
+    if (isOverlayHitTarget(el)) continue
+    if (!root.contains(el)) continue
+    const markup = el.closest(MARKUP_HIT_SELECTOR)
+    if (markup instanceof HTMLElement && root.contains(markup)) return markup
+  }
+  return null
+}
+
+/** 橡皮擦命中测试：高亮/下划线文本标记 */
+export function hitTestMarkupAnnotation(
+  annotations: Annotation[],
+  clientX: number,
+  clientY: number,
+  surface: HTMLElement
+): Annotation | undefined {
+  const markup = findMarkupElementAtPoint(surface, clientX, clientY)
+  if (!markup) return undefined
+  return matchMarkupAnnotation(annotations, expandMarkupText(markup))
+}
+
 export function scrollToAnnotationText(root: HTMLElement, selectedText: string): boolean {
   if (!selectedText.trim()) return false
   const domRange = findTextRangeInRoot(root, selectedText)

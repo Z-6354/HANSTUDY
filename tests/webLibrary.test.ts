@@ -34,8 +34,9 @@ describe('webLibrary rules', () => {
     expect(credentialsOriginMatch('https://example.com', 'https://xa.com')).toBe(false)
   })
 
-  it('webDisplayTitle falls back to hostname', () => {
-    expect(webDisplayTitle('', 'https://docs.github.com')).toBe('docs.github.com')
+  it('webDisplayTitle shows page title only, not url', () => {
+    expect(webDisplayTitle('', 'https://docs.github.com')).toBe('网页')
     expect(webDisplayTitle('GitHub Docs', 'https://docs.github.com')).toBe('GitHub Docs')
+    expect(webDisplayTitle('https://docs.github.com/en', 'https://docs.github.com/en')).toBe('网页')
   })
 })

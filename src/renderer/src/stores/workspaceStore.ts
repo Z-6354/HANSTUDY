@@ -1,5 +1,7 @@
 import { create } from 'zustand'
-import { resolveWebInput, webDisplayName } from '@shared/webCrop'
+import { resolveWebInput, webUrlKey } from '@shared/webCrop'
+import { webDisplayTitle } from '@shared/webLibrary'
+import { useWebLibraryStore } from './webLibraryStore'
 import { getSearchEngine, getWebBrowseLayoutPrefs } from './appSettingsStore'
 import { formatWebSnapshotTabTitle, type WebSnapshotMeta } from '@shared/webSnapshot'
 import type { AnnotationTool, ChatMessage, TextSelectionContext } from '../types/global.d'
@@ -104,6 +106,7 @@ interface WorkspaceState {
   closeAllDocuments: () => void
   reorderDocuments: (fromId: string, toId: string) => void
   setActiveDocument: (id: string) => void
+  renameDocument: (id: string, name: string) => void
   setRootFolder: (path: string, files: FileTreeEntry[]) => void
   addRecentFile: (path: string) => void
   toggleAIPanel: () => void
@@ -217,7 +220,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const existing = get().documents.find((d) => d.path === doc.path)
     if (existing) {
       set({ activeDocumentId: existing.id, selection: null })
-      if (doc.path !== SETTINGS_DOC_PATH) {
+      if (doc.path !== SETTINGS_DOC_PATH && doc.type !== 'web') {
         get().addRecentFile(doc.path)
       }
       return
@@ -230,7 +233,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       activeDocumentId: id,
       selection: null
     }))
-    if (doc.path !== SETTINGS_DOC_PATH) {
+    if (doc.path !== SETTINGS_DOC_PATH && doc.type !== 'web') {
       get().addRecentFile(doc.path)
     }
   },
@@ -243,9 +246,27 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       showSidebar: layout.webBrowseHideSidebar ? false : state.showSidebar,
       showAIPanel: layout.webBrowseHideAIPanel ? false : state.showAIPanel
     }))
+    const key = webUrlKey(url)
+    const historyTitle = useWebLibraryStore
+      .getState()
+      .history.find((h) => webUrlKey(h.url) === key)?.title
+    const resolveWebTabName = (sessionTitle?: string): string =>
+      webDisplayTitle(sessionTitle || historyTitle || '', url)
+
+    const existing = get().documents.find((d) => d.type === 'web' && webUrlKey(d.path) === key)
+    if (existing) {
+      const sessionTitle = get().webSessions[existing.id]?.title
+      const name = resolveWebTabName(sessionTitle)
+      if (name !== existing.name && name !== '网页') {
+        get().renameDocument(existing.id, name)
+      }
+      set({ activeDocumentId: existing.id, selection: null })
+      get().dispatchWebNav('navigate', url)
+      return true
+    }
     get().openDocument({
       path: url,
-      name: webDisplayName(url),
+      name: resolveWebTabName(),
       type: 'web'
     })
     return true
@@ -371,6 +392,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   setActiveDocument: (id) => set({ activeDocumentId: id, selection: null, focusAnnotationId: null }),
+
+  renameDocument: (id, name) =>
+    set((state) => ({
+      documents: state.documents.map((d) => (d.id === id ? { ...d, name } : d))
+    })),
 
   setRootFolder: (path, files) => {
     set({ rootFolder: path, fileTree: files })

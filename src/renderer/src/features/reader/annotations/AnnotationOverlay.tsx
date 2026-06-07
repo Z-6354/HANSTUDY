@@ -12,6 +12,7 @@ import {
   shapeToPixels
 } from './shapeUtils'
 import { annotationCreateInput, findLastAnnotationByType, toolUsesRightClickUndo } from './annotationToolUtils'
+import { hitTestMarkupAnnotation } from './textUtils'
 import { useAnnotations } from './useAnnotations'
 
 interface AnnotationOverlayProps {
@@ -117,12 +118,17 @@ export function AnnotationOverlay({
   const setFocusAnnotationId = useWorkspaceStore((s) => s.setFocusAnnotationId)
 
   const drawAnnotations = annotations.filter((a) => a.type === 'pen' || a.type === 'rect')
+  const markupAnnotations = annotations.filter(
+    (a) => (a.type === 'highlight' || a.type === 'underline') && a.selectedText
+  )
   const drawAnnotationsRef = useRef(drawAnnotations)
+  const markupAnnotationsRef = useRef(markupAnnotations)
   const annotationsRef = useRef(annotations)
   const savePenRef = useRef<(points: ShapePoint[]) => Promise<void>>(async () => {})
   const saveRectRef = useRef<(start: ShapePoint, end: ShapePoint) => Promise<void>>(async () => {})
   const annotationToolRef = useRef(annotationTool)
   drawAnnotationsRef.current = drawAnnotations
+  markupAnnotationsRef.current = markupAnnotations
   annotationsRef.current = annotations
   annotationToolRef.current = annotationTool
 
@@ -290,9 +296,16 @@ export function AnnotationOverlay({
         e.preventDefault()
         e.stopPropagation()
         window.getSelection()?.removeAllRanges()
-        const hit = [...drawAnnotationsRef.current]
-          .reverse()
-          .find((a) => hitTestAnnotation(a, e.clientX, e.clientY, surface))
+        const hit =
+          [...drawAnnotationsRef.current]
+            .reverse()
+            .find((a) => hitTestAnnotation(a, e.clientX, e.clientY, surface)) ??
+          hitTestMarkupAnnotation(
+            markupAnnotationsRef.current,
+            e.clientX,
+            e.clientY,
+            surface
+          )
         if (hit) {
           eraserUndoStackRef.current.push(hit)
           void remove(hit.id)

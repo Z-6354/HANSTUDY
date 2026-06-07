@@ -5,7 +5,8 @@ import {
   looksLikeUrl,
   normalizeWebUrl,
   resolveWebInput,
-  webDisplayName
+  webDisplayName,
+  webUrlKey
 } from '../src/shared/webCrop'
 
 describe('webCrop rules', () => {
@@ -45,5 +46,11 @@ describe('webCrop rules', () => {
 
   it('webDisplayName strips www', () => {
     expect(webDisplayName('https://www.example.com/path')).toBe('example.com')
+  })
+
+  it('webUrlKey normalizes trailing slash for matching', () => {
+    expect(webUrlKey('https://example.com/page/')).toBe('https://example.com/page')
+    expect(webUrlKey('https://example.com/page')).toBe('https://example.com/page')
+    expect(webUrlKey('https://example.com/page#frag')).toBe('https://example.com/page')
   })
 })
