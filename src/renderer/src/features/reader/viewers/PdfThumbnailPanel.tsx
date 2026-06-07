@@ -8,18 +8,28 @@ interface PdfThumbnailPanelProps {
   pdf: pdfjsLib.PDFDocumentProxy | null
   pageCount: number
   currentPage: number
+  open: boolean
   onNavigate: (page: number) => void
+}
+
+function isThumbVisible(root: HTMLElement, item: HTMLElement): boolean {
+  const rootRect = root.getBoundingClientRect()
+  const itemRect = item.getBoundingClientRect()
+  const margin = 8
+  return itemRect.top >= rootRect.top + margin && itemRect.bottom <= rootRect.bottom - margin
 }
 
 export function PdfThumbnailPanel({
   pdf,
   pageCount,
   currentPage,
+  open,
   onNavigate
 }: PdfThumbnailPanelProps): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
   const canvasMapRef = useRef<Map<number, HTMLCanvasElement>>(new Map())
   const observerRef = useRef<IntersectionObserver | null>(null)
+  const renderPageRef = useRef<(pageNo: number) => Promise<void>>(async () => {})
   const [renderTick, setRenderTick] = useState(0)
   const drag = useDragScroll()
 
@@ -62,6 +72,8 @@ export function PdfThumbnailPanel({
       setRenderTick((n) => n + 1)
     }
 
+    renderPageRef.current = renderPage
+
     observerRef.current?.disconnect()
     observerRef.current = new IntersectionObserver(
       (entries) => {
@@ -90,12 +102,33 @@ export function PdfThumbnailPanel({
     }
   }, [pdf, pageCount])
 
+  /** 面板打开或当前页变化：直接定位到当前页，避免从第 1 页 smooth 滑下来 */
   useEffect(() => {
-    const active = scrollRef.current?.querySelector<HTMLElement>(
-      `.pdf-thumb-item.active`
-    )
-    active?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-  }, [currentPage])
+    if (!open || !scrollRef.current || pageCount <= 0) return
+
+    const scrollToCurrent = (): void => {
+      const root = scrollRef.current
+      const active = root?.querySelector<HTMLElement>('.pdf-thumb-item.active')
+      if (!root || !active) return
+      if (!isThumbVisible(root, active)) {
+        active.scrollIntoView({ block: 'center', behavior: 'auto' })
+      }
+    }
+
+    const eagerAround = (): void => {
+      const from = Math.max(1, currentPage - 2)
+      const to = Math.min(pageCount, currentPage + 2)
+      for (let p = from; p <= to; p++) {
+        void renderPageRef.current(p)
+      }
+    }
+
+    eagerAround()
+    requestAnimationFrame(() => {
+      scrollToCurrent()
+      requestAnimationFrame(scrollToCurrent)
+    })
+  }, [open, currentPage, pageCount])
 
   return (
     <div className="pdf-side-panel-inner">

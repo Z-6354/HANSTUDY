@@ -10,6 +10,8 @@ import {
   normalizeWheelDelta,
   pageRenderPriority,
   previewScaleRatio,
+  scrollContainerToChild,
+  scrollElementIntoScrollParent,
   wheelDeltaToZoomFactor
 } from '../src/renderer/src/features/reader/viewers/pdfViewerPerf'
 
@@ -91,5 +93,40 @@ describe('pdfViewerPerf', () => {
     })
     expect(next.scrollTop).toBeCloseTo(300, 5)
     expect(next.scrollLeft).toBeCloseTo(80, 5)
+  })
+
+  it('scrollContainerToChild adjusts scrollTop by visual delta', () => {
+    const container = {
+      scrollTop: 100,
+      getBoundingClientRect: () => ({ top: 0 })
+    } as unknown as HTMLElement
+    const child = {
+      getBoundingClientRect: () => ({ top: 250 })
+    } as unknown as HTMLElement
+    scrollContainerToChild(container, child, 16)
+    expect(container.scrollTop).toBe(334)
+  })
+
+  it('scrollElementIntoScrollParent uses nearest scrollable parent', () => {
+    const container = {
+      scrollTop: 0,
+      scrollHeight: 1000,
+      clientHeight: 400,
+      getBoundingClientRect: () => ({ top: 0 }),
+      parentElement: null
+    } as unknown as HTMLElement
+    Object.defineProperty(container, 'parentElement', { value: null })
+    const child = {
+      getBoundingClientRect: () => ({ top: 200 }),
+      parentElement: container
+    } as unknown as HTMLElement
+    const originalGetComputedStyle = globalThis.getComputedStyle
+    globalThis.getComputedStyle = ((el: Element) => {
+      if (el === container) return { overflowY: 'auto' } as CSSStyleDeclaration
+      return { overflowY: 'visible' } as CSSStyleDeclaration
+    }) as typeof getComputedStyle
+    scrollElementIntoScrollParent(child, 8)
+    expect(container.scrollTop).toBe(192)
+    globalThis.getComputedStyle = originalGetComputedStyle
   })
 })

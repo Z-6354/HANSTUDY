@@ -1,8 +1,8 @@
 import type { ToolRegistry } from '../ToolRegistry'
 import { BUILTIN_TOOLS } from '../../../shared/agent/tools'
 import { getDocumentContext, readTextFile } from '../../infra/fileService'
-import { listAnnotations } from '../../infra/annotationBridge'
 import { loadSkillBody } from '../../skill/skillService'
+import { ensureNotesRoot, listNotesDirectory } from '../../infra/notesStore'
 
 export function registerBuiltinTools(registry: ToolRegistry): void {
   registry.register({
@@ -42,19 +42,18 @@ export function registerBuiltinTools(registry: ToolRegistry): void {
   })
 
   registry.register({
-    name: BUILTIN_TOOLS.listAnnotations,
-    description: '列出指定文档的全部标注',
+    name: BUILTIN_TOOLS.listNotes,
+    description: '列出笔记库目录下的 Markdown 笔记文件',
     parameters: {
       type: 'object',
       properties: {
-        docPath: { type: 'string', description: '文档路径' }
-      },
-      required: ['docPath']
+        dirPath: { type: 'string', description: '笔记目录路径，省略则使用根目录' }
+      }
     },
     handler: async (args) => {
-      const docPath = String(args.docPath ?? '')
-      registry.pathGuard.assertAllowed(docPath)
-      const items = await listAnnotations(docPath)
+      const dir = args.dirPath ? String(args.dirPath) : await ensureNotesRoot()
+      registry.pathGuard.assertAllowed(dir)
+      const items = await listNotesDirectory(dir)
       return { success: true, content: JSON.stringify(items, null, 2) }
     }
   })

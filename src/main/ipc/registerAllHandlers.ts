@@ -4,16 +4,21 @@ import { stat, writeFile } from 'fs/promises'
 import { dirname } from 'path'
 import { IPC } from '../../shared/ipc/channels'
 import type { AppSettings } from '../../shared/appSettings'
-import type { Annotation, AISettings } from '../../shared/types'
+import type { AISettings } from '../../shared/types'
 import { getAppContext } from '../bootstrap/AppContext'
+import { lockPageZoomForWindow } from '../bootstrap/pageZoomLock'
 import { ipcRegistry } from './IpcRegistry'
 import {
-  createAnnotation,
-  deleteAnnotation,
-  exportAnnotationsMarkdown,
-  listAnnotations,
-  updateAnnotation
-} from '../infra/annotationBridge'
+  appendNote,
+  createNoteFile,
+  createNoteFolder,
+  deleteNoteEntry,
+  ensureNotesRoot,
+  listNotesDirectory,
+  readNote,
+  renameNoteEntry,
+  writeNote
+} from '../infra/notesStore'
 import { getAppSettings, saveAppSettings } from '../config/appSettingsService'
 import { getBackendStatus } from '../runtime/javaBridge'
 import { buildFullMemorySnapshot } from '../infra/memoryDiagnostics'
@@ -46,20 +51,15 @@ import {
   getDocumentContext,
   readBinaryFile,
   readTextFile,
+  readTextDocument,
+  writeTextFile,
   renamePath
 } from '../infra/fileService'
 import {
   ensureLocalLibraryDir,
-  getLocalLibraryRoot,
   importFilesToLocalLibrary,
   listLocalLibraryFiles
 } from '../infra/localLibraryService'
-import {
-  deleteWebSnapshot,
-  getWebSnapshotMetaByPdfPath,
-  listWebSnapshots,
-  saveWebSnapshot
-} from '../web/webSnapshotService'
 import { logWebDiagnostics, probeWebUrl, runWebDiagnostics } from '../web/webDiagnosticsService'
 import {
   addWebBookmark,
@@ -114,6 +114,9 @@ export function registerAllHandlers(): void {
   })
   ipcRegistry.register(IPC.window.close, () => ctx.mainWindow?.close())
   ipcRegistry.register(IPC.window.isMaximized, () => ctx.mainWindow?.isMaximized() ?? false)
+  ipcRegistry.register(IPC.window.resetPageZoom, () => {
+    if (ctx.mainWindow) lockPageZoomForWindow(ctx.mainWindow)
+  })
 
   ipcRegistry.register(IPC.system.getMemory, async () =>
     buildFullMemorySnapshot(getWebGuestCount())
@@ -172,9 +175,14 @@ export function registerAllHandlers(): void {
   })
 
   ipcRegistry.register(IPC.localLibrary.list, async () => listLocalLibraryFiles())
-  ipcRegistry.register(IPC.localLibrary.getPath, async () => getLocalLibraryRoot())
+  ipcRegistry.register(IPC.localLibrary.getPath, async () => {
+    const root = await ensureLocalLibraryDir()
+    ctx.setWorkspaceRoot(root)
+    return root
+  })
   ipcRegistry.register(IPC.localLibrary.import, async () => {
     const root = await ensureLocalLibraryDir()
+    ctx.setWorkspaceRoot(root)
     const result = await dialog.showOpenDialog(ctx.mainWindow!, {
       title: '上传文件到本地库',
       defaultPath: root,
@@ -196,7 +204,13 @@ export function registerAllHandlers(): void {
   })
 
   ipcRegistry.register(IPC.fs.listDirectory, async (dirPath: unknown) => listDirectory(String(dirPath)))
-  ipcRegistry.register(IPC.fs.readText, async (filePath: unknown) => readTextFile(String(filePath)))
+  ipcRegistry.register(IPC.fs.readText, async (filePath: unknown) =>
+    readTextDocument(String(filePath))
+  )
+  ipcRegistry.register(IPC.fs.writeText, async (filePath: unknown, content: unknown) => {
+    await writeTextFile(String(filePath), String(content ?? ''))
+    return true
+  })
   ipcRegistry.register(IPC.fs.readBinary, async (filePath: unknown) => {
     const data = await readBinaryFile(String(filePath))
     return data
@@ -235,18 +249,31 @@ export function registerAllHandlers(): void {
     getDocumentContext(String(filePath))
   )
 
-  ipcRegistry.register(IPC.annotations.list, async (docPath: unknown) =>
-    listAnnotations(String(docPath))
+  ipcRegistry.register(IPC.notes.getRoot, async () => ensureNotesRoot())
+  ipcRegistry.register(IPC.notes.list, async (dirPath: unknown) =>
+    listNotesDirectory(dirPath ? String(dirPath) : undefined)
   )
-  ipcRegistry.register(IPC.annotations.create, async (input: unknown) =>
-    createAnnotation(input as Omit<Annotation, 'id' | 'createdAt'>)
+  ipcRegistry.register(IPC.notes.read, async (filePath: unknown) => readNote(String(filePath)))
+  ipcRegistry.register(IPC.notes.write, async (filePath: unknown, content: unknown) => {
+    await writeNote(String(filePath), String(content ?? ''))
+    return true
+  })
+  ipcRegistry.register(IPC.notes.append, async (filePath: unknown, chunk: unknown) => {
+    await appendNote(String(filePath), String(chunk ?? ''))
+    return true
+  })
+  ipcRegistry.register(IPC.notes.createFile, async (dirPath: unknown, fileName: unknown) =>
+    createNoteFile(String(dirPath), String(fileName))
   )
-  ipcRegistry.register(IPC.annotations.update, async (id: unknown, patch: unknown) =>
-    updateAnnotation(String(id), patch as Partial<Annotation>)
+  ipcRegistry.register(IPC.notes.createFolder, async (dirPath: unknown, folderName: unknown) =>
+    createNoteFolder(String(dirPath), String(folderName))
   )
-  ipcRegistry.register(IPC.annotations.delete, async (id: unknown) => deleteAnnotation(String(id)))
-  ipcRegistry.register(IPC.annotations.export, async (docPath: unknown) =>
-    exportAnnotationsMarkdown(String(docPath))
+  ipcRegistry.register(IPC.notes.delete, async (targetPath: unknown) => {
+    await deleteNoteEntry(String(targetPath))
+    return true
+  })
+  ipcRegistry.register(IPC.notes.rename, async (targetPath: unknown, newName: unknown) =>
+    renameNoteEntry(String(targetPath), String(newName))
   )
 
   ipcRegistry.register(IPC.settings.get, async () => {
@@ -419,14 +446,6 @@ function registerWebHandlers(): void {
     }
   })
 
-  ipcRegistry.register(IPC.web.saveSnapshot, async (input: unknown) =>
-    saveWebSnapshot(input as Parameters<typeof saveWebSnapshot>[0])
-  )
-  ipcRegistry.register(IPC.web.listSnapshots, async () => listWebSnapshots())
-  ipcRegistry.register(IPC.web.getSnapshotMeta, async (pdfPath: unknown) =>
-    getWebSnapshotMetaByPdfPath(String(pdfPath))
-  )
-  ipcRegistry.register(IPC.web.deleteSnapshot, async (id: unknown) => deleteWebSnapshot(String(id)))
   ipcRegistry.register(IPC.web.runDiagnostics, async () => {
     const report = await runWebDiagnostics()
     logWebDiagnostics(report)

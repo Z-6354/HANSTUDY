@@ -1,7 +1,7 @@
 import type { ElectronAPI } from '../../../preload/index'
 import type { SkillListItem } from '@shared/skills'
-import type { WebSnapshotMeta } from '@shared/webSnapshot'
-import type { AISettings, Annotation, ChatMessage, FileEntry, TextSelectionContext } from '@shared/types'
+import type { NoteEntry } from '@shared/notes'
+import type { AISettings, ChatMessage, FileEntry, TextSelectionContext, WorkbenchMode } from '@shared/types'
 
 declare global {
   interface Window {
@@ -11,15 +11,11 @@ declare global {
 
 export type {
   AISettings,
-  Annotation,
-  AnnotationTool,
   ChatMessage,
   ChatMode,
-  DrawShape,
   FileEntry,
-  ShapePoint,
-  TextRange,
+  NoteEntry,
   TextSelectionContext,
+  WorkbenchMode,
   SkillListItem
 }
-export type { WebSnapshotMeta } from '@shared/webSnapshot'

@@ -45,14 +45,14 @@ export function useWorkspaceSessionPersist(): void {
         }
         try {
           const info = await window.api.fs.getFileInfo(doc.path)
-          if (info.type === 'unknown' && doc.type !== 'web-snapshot') {
+          if (info.type === 'unknown') {
             failed.push(doc.path)
             continue
           }
           store.openDocument({
             path: doc.path,
             name: doc.name || info.name,
-            type: (info.type === 'unknown' ? doc.type : info.type) as OpenDocument['type']
+            type: info.type as OpenDocument['type']
           })
         } catch {
           failed.push(doc.path)

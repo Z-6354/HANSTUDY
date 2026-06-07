@@ -3,7 +3,7 @@
 export const BUILTIN_TOOLS = {
   readDocument: 'read_document',
   getDocumentContext: 'get_document_context',
-  listAnnotations: 'list_annotations',
+  listNotes: 'list_notes',
   loadSkill: 'load_skill',
   searchInDocument: 'search_in_document'
 } as const

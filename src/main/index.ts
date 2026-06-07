@@ -3,6 +3,9 @@ import { startApp, shutdownApp } from './bootstrap/AppBootstrap'
 import { createMainWindow } from './bootstrap/createWindow'
 import { getAppContext } from './bootstrap/AppContext'
 
+// 禁止触控板 pinch 触发 Chromium 页面缩放（须在 app.ready 之前）
+app.commandLine.appendSwitch('disable-pinch')
+
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {
   app.quit()

@@ -5,6 +5,8 @@ interface PdfSideHoverProps {
   open: boolean
   setOpen: (open: boolean) => void
   label: string
+  /** 面板展开前同步调用（如提交 PDF 缩放预览） */
+  onHoverStart?: () => void
   children: ReactNode
 }
 
@@ -15,16 +17,21 @@ export function PdfSideHover({
   open,
   setOpen,
   label,
+  onHoverStart,
   children
 }: PdfSideHoverProps): JSX.Element {
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const handleEnter = (): void => {
+  const handleOpen = (): void => {
     if (closeTimerRef.current) {
       clearTimeout(closeTimerRef.current)
       closeTimerRef.current = null
     }
-    setOpen(true)
+    if (onHoverStart) {
+      onHoverStart()
+    } else {
+      setOpen(true)
+    }
   }
 
   const handleLeave = (): void => {
@@ -41,16 +48,51 @@ export function PdfSideHover({
     }
   }, [])
 
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const root = rootRef.current
+    if (!root) return
+
+    const onWheel = (e: WheelEvent): void => {
+      if (!e.ctrlKey && !e.metaKey) return
+      e.preventDefault()
+      e.stopPropagation()
+    }
+
+    root.addEventListener('wheel', onWheel, { passive: false, capture: true })
+    return () => root.removeEventListener('wheel', onWheel, { capture: true })
+  }, [])
+
   return (
     <div
+      ref={rootRef}
       className={`pdf-side-hover pdf-side-hover--${side}${open ? ' open' : ''}`}
-      onMouseEnter={handleEnter}
       onMouseLeave={handleLeave}
       aria-label={label}
     >
-      <div className="pdf-side-trigger" title={label} />
-      <div className={`pdf-side-panel pdf-side-panel--${side}`} role="region" aria-hidden={!open}>
-        {open ? children : null}
+      <div
+        className="pdf-side-trigger"
+        title={label}
+        role="button"
+        tabIndex={0}
+        aria-label={label}
+        onMouseEnter={handleOpen}
+        onClick={handleOpen}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            handleOpen()
+          }
+        }}
+      />
+      <div
+        className={`pdf-side-panel pdf-side-panel--${side}${open ? '' : ' pdf-side-panel--collapsed'}`}
+        role="region"
+        aria-hidden={!open}
+        onMouseEnter={handleOpen}
+      >
+        {children}
       </div>
     </div>
   )

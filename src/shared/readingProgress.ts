@@ -4,7 +4,6 @@ export type SavedDocumentType =
   | 'pdf'
   | 'docx'
   | 'web'
-  | 'web-snapshot'
   | 'unknown'
 
 export interface ReadingProgress {

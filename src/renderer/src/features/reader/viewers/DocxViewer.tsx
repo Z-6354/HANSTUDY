@@ -1,20 +1,14 @@
 import DOMPurify from 'dompurify'
 import mammoth from 'mammoth'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useBindAnnotationSurface } from '../../../features/reader/annotations/useBindAnnotationSurface'
-import { resolveMarkupColor } from '../annotations/annotationMarkup'
-import { resolveDomMarkupRects } from '../annotations/markupOverlayUtils'
-import { blockViewerContextMenu, scrollToAnnotationText } from '../annotations/textUtils'
-import { useRegisterMarkupResolver } from '../annotations/useRegisterMarkupResolver'
-import { NoteInputModal, SelectionToolbar } from '../../../features/reader/annotations/SelectionToolbar'
-import { useAnnotations } from '../../../features/reader/annotations/useAnnotations'
-import { useDomTextSelection } from '../../../features/reader/annotations/useDomTextSelection'
-import { useDomSelectionEffect } from '../../../features/reader/annotations/useDomSelectionEffect'
-import { useDomAnnotationToolUndo } from '../../../features/reader/annotations/useAnnotationToolUndo'
-import { useDomFind } from '../../../features/reader/find/useDomFind'
-import { useViewerCommand } from '../../../features/reader/find/useViewerCommand'
-import { selectAllInElement } from '../../../features/reader/find/domFind'
-import type { Annotation } from '../../../types/global.d'
+import { SelectionToolbar } from '../selection/SelectionToolbar'
+import {
+  useDomTextSelection,
+  useSelectionToolbarEffect
+} from '../selection/useDomTextSelection'
+import { useDomFind } from '../find/useDomFind'
+import { useViewerCommand } from '../find/useViewerCommand'
+import { selectAllInElement } from '../find/domFind'
 import { useWorkspaceStore } from '../../../stores/workspaceStore'
 
 interface DocxViewerProps {
@@ -28,35 +22,16 @@ export function DocxViewer({ filePath, isActive = true }: DocxViewerProps): JSX.
   const [error, setError] = useState<string | null>(null)
   const [toolbarRect, setToolbarRect] = useState<DOMRect | null>(null)
   const [pendingText, setPendingText] = useState('')
-  const [showNoteModal, setShowNoteModal] = useState(false)
 
   const contentRef = useRef<HTMLDivElement>(null)
-  const surfaceRef = useRef<HTMLDivElement | null>(null)
-  const bindAnnotationSurface = useBindAnnotationSurface()
-  const { annotations, create, remove } = useAnnotations(filePath, isActive)
+  const { sendToAI, setSelection } = useWorkspaceStore()
 
-  const bindSurface = useCallback(
-    (el: HTMLDivElement | null) => {
-      surfaceRef.current = el
-      bindAnnotationSurface(isActive ? el : null)
-    },
-    [bindAnnotationSurface, isActive]
-  )
-
-  useEffect(() => {
-    bindAnnotationSurface(isActive ? surfaceRef.current : null)
-  }, [isActive, html, loading, bindAnnotationSurface])
-  const { sendToAI, setSelection, annotationTool, focusAnnotationId, setFocusAnnotationId } =
-    useWorkspaceStore()
-  const drawTool =
-    annotationTool === 'pen' || annotationTool === 'rect' || annotationTool === 'eraser'
-  const textSelectEnabled = isActive && !drawTool
-  const { selection: domSelection, clearSelection: clearDomSelection } = useDomTextSelection(
+  const { selection: domSelection, clearSelection } = useDomTextSelection(
     filePath,
     contentRef,
-    textSelectEnabled
+    isActive && !loading
   )
-  useDomAnnotationToolUndo(annotations, remove, contentRef, isActive)
+  useSelectionToolbarEffect(domSelection, setSelection, setToolbarRect, setPendingText)
   useDomFind(contentRef.current, isActive)
   useViewerCommand(isActive, 'selectAll', () => selectAllInElement(contentRef.current))
 
@@ -80,9 +55,11 @@ export function DocxViewer({ filePath, isActive = true }: DocxViewerProps): JSX.
       }
     }
 
-    loadDocx()
+    void loadDocx()
     return () => {
       cancelled = true
+      setHtml('')
+      if (contentRef.current) contentRef.current.innerHTML = ''
     }
   }, [filePath])
 
@@ -92,96 +69,30 @@ export function DocxViewer({ filePath, isActive = true }: DocxViewerProps): JSX.
     el.innerHTML = html
   }, [html])
 
-  const resolveMarkupRects = useCallback(
-    (ann: Annotation) => {
-      const surface = surfaceRef.current
-      const root = contentRef.current
-      if (!surface || !root) return []
-      return resolveDomMarkupRects(ann, surface, root)
-    },
-    [html]
-  )
-  useRegisterMarkupResolver(resolveMarkupRects, isActive && !loading)
-
-  const closeToolbar = (): void => {
+  const closeToolbar = useCallback((): void => {
     setToolbarRect(null)
     setPendingText('')
-    clearDomSelection()
-  }
-
-  const saveAnnotation = useCallback(
-    async (
-      type: 'highlight' | 'underline' | 'note',
-      noteContent?: string,
-      override?: { text?: string; domRange?: Range | null }
-    ): Promise<void> => {
-      const text = override?.text ?? pendingText
-      if (!text) return
-      const color = resolveMarkupColor(type === 'note' ? 'note' : type)
-      await create({
-        type,
-        color,
-        selectedText: text,
-        content: noteContent
-      })
-      closeToolbar()
-      setShowNoteModal(false)
-    },
-    [create, pendingText]
-  )
-
-  useDomSelectionEffect({
-    domSelection,
-    clearSelection: clearDomSelection,
-    annotationTool,
-    setSelection,
-    setPendingText,
-    setToolbarRect,
-    setShowNoteModal,
-    saveAnnotation
-  })
-
-  useEffect(() => {
-    if (!focusAnnotationId || !contentRef.current) return
-    const ann = annotations.find((a) => a.id === focusAnnotationId)
-    if (!ann) {
-      setFocusAnnotationId(null)
-      return
-    }
-    if (ann.selectedText) {
-      scrollToAnnotationText(contentRef.current, ann.selectedText)
-    }
-    setFocusAnnotationId(null)
-  }, [focusAnnotationId, annotations, setFocusAnnotationId])
+    clearSelection()
+  }, [clearSelection])
 
   if (loading) return <div className="loading-state">加载 Word 文档...</div>
   if (error) return <div className="error-state">{error}</div>
 
   return (
-    <div ref={bindSurface} className="docx-content annotated-viewer">
+    <div className="docx-content">
       <p style={{ color: 'var(--text-muted)', fontSize: '11px', marginBottom: '16px' }}>
-        Word 简化视图 — 选中文本可高亮、便签或 Ask AI
+        Word 简化视图 — 选中文本可 Ask AI
       </p>
-      <div ref={contentRef} onContextMenu={blockViewerContextMenu} />
+      <div ref={contentRef} />
 
-      {toolbarRect && annotationTool === 'select' && (
+      {toolbarRect && (
         <SelectionToolbar
           rect={toolbarRect}
-          onHighlight={() => saveAnnotation('highlight')}
-          onUnderline={() => saveAnnotation('underline')}
-          onNote={() => setShowNoteModal(true)}
           onAskAI={() => {
             sendToAI(pendingText, filePath)
             closeToolbar()
           }}
           onClose={closeToolbar}
-        />
-      )}
-
-      {showNoteModal && (
-        <NoteInputModal
-          onSubmit={(c) => saveAnnotation('note', c)}
-          onCancel={() => setShowNoteModal(false)}
         />
       )}
     </div>

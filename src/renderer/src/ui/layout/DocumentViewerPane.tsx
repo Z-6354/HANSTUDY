@@ -1,5 +1,4 @@
 import type { OpenDocument } from '../../stores/workspaceStore'
-import { AnnotatedViewerShell } from '../../features/reader/annotations/AnnotationSurfaceContext'
 import { SettingsPage } from '../../features/settings/SettingsPage'
 import { DocxViewer } from '../../features/reader/viewers/DocxViewer'
 import { MdViewer } from '../../features/reader/viewers/MdViewer'
@@ -12,11 +11,16 @@ interface DocumentViewerPaneProps {
   isActive: boolean
 }
 
+/**
+ * 打开的标签页始终挂载查看器（内容常驻内存）；
+ * 关闭标签或退出应用时 React 卸载组件并释放资源。
+ * 非激活标签仅隐藏（CSS），不销毁实例。
+ */
 export function DocumentViewerPane({ doc, isActive }: DocumentViewerPaneProps): JSX.Element {
   if (doc.type === 'settings') {
     return (
       <div className={`viewer-pane ${isActive ? 'active' : ''}`} aria-hidden={!isActive}>
-        <SettingsPage />
+        {isActive ? <SettingsPage /> : null}
       </div>
     )
   }
@@ -30,7 +34,7 @@ export function DocumentViewerPane({ doc, isActive }: DocumentViewerPaneProps): 
   }
 
   const viewer =
-    doc.type === 'web-snapshot' || doc.type === 'pdf' ? (
+    doc.type === 'pdf' ? (
       <PdfViewer filePath={doc.path} isActive={isActive} />
     ) : doc.type === 'md' ? (
       <MdViewer filePath={doc.path} isActive={isActive} />
@@ -44,9 +48,7 @@ export function DocumentViewerPane({ doc, isActive }: DocumentViewerPaneProps): 
 
   return (
     <div className={`viewer-pane ${isActive ? 'active' : ''}`} aria-hidden={!isActive}>
-      <AnnotatedViewerShell docPath={doc.path} isActive={isActive}>
-        {viewer}
-      </AnnotatedViewerShell>
+      {viewer}
     </div>
   )
 }

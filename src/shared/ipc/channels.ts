@@ -6,6 +6,7 @@ export const IPC = {
     maximize: 'window:maximize',
     close: 'window:close',
     isMaximized: 'window:isMaximized',
+    resetPageZoom: 'window:resetPageZoom',
     maximizedChanged: 'window:maximized-changed'
   },
   system: {
@@ -33,6 +34,7 @@ export const IPC = {
   fs: {
     listDirectory: 'fs:listDirectory',
     readText: 'fs:readText',
+    writeText: 'fs:writeText',
     readBinary: 'fs:readBinary',
     getFileInfo: 'fs:getFileInfo',
     createFile: 'fs:createFile',
@@ -41,12 +43,16 @@ export const IPC = {
     rename: 'fs:rename',
     getDocumentContext: 'fs:getDocumentContext'
   },
-  annotations: {
-    list: 'annotations:list',
-    create: 'annotations:create',
-    update: 'annotations:update',
-    delete: 'annotations:delete',
-    export: 'annotations:export'
+  notes: {
+    getRoot: 'notes:getRoot',
+    list: 'notes:list',
+    read: 'notes:read',
+    write: 'notes:write',
+    append: 'notes:append',
+    createFile: 'notes:createFile',
+    createFolder: 'notes:createFolder',
+    delete: 'notes:delete',
+    rename: 'notes:rename'
   },
   settings: {
     get: 'settings:get',
@@ -80,10 +86,6 @@ export const IPC = {
   },
   web: {
     openExternal: 'web:openExternal',
-    saveSnapshot: 'web:saveSnapshot',
-    listSnapshots: 'web:listSnapshots',
-    getSnapshotMeta: 'web:getSnapshotMeta',
-    deleteSnapshot: 'web:deleteSnapshot',
     runDiagnostics: 'web:runDiagnostics',
     probeUrl: 'web:probeUrl'
   },

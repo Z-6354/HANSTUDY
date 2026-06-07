@@ -42,7 +42,7 @@ export function TabDocIcon({ type, name }: { type: string; name: string }): JSX.
   if (type === 'settings') {
     return <Icon icon={Settings} size={14} className="tab-type-icon" />
   }
-  if (type === 'web' || type === 'web-snapshot') {
+  if (type === 'web') {
     return <Icon icon={Globe} size={14} className="tab-type-icon" />
   }
   return <FileTypeIcon name={name} size={14} className="tab-type-icon" />

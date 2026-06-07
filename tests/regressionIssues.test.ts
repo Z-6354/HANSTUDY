@@ -14,14 +14,7 @@ import {
   shouldStartGuestNavigation,
   WEB_LAYOUT_RAIL_GUTTER
 } from '../src/shared/webGuestBounds'
-import { buildDomSelectionKey } from '../src/renderer/src/features/reader/annotations/selectionKey'
-import { resolveStoredMarkupColor } from '../src/renderer/src/features/reader/annotations/annotationMarkup'
-import {
-  applyDomAnnotation,
-  findTextRangeInRoot,
-  refreshTextMarkup,
-  scrollToAnnotationText
-} from '../src/renderer/src/features/reader/annotations/textUtils'
+import { buildDomSelectionKey } from '../src/renderer/src/features/reader/selection/selectionKey'
 import { isZoomPreviewing, SCALE_COMMIT_DEBOUNCE_MS } from '../src/renderer/src/features/reader/viewers/pdfViewerPerf'
 import { fitStaleCanvasToSlot } from '../src/renderer/src/features/reader/viewers/pdfLazyRender'
 import type { PdfPageSlot } from '../src/renderer/src/features/reader/viewers/pdfLazyRender'
@@ -95,59 +88,6 @@ describe('R-ANNOT selection key dedup (doc 16/51)', () => {
     expect(k1).toBe(k2)
     expect(buildDomSelectionKey('/a.md', 'world', range)).not.toBe(k1)
     root.remove()
-  })
-})
-
-describe('R-ANNOT cross-node markup (doc 47/49/51)', () => {
-  it('findTextRangeInRoot matches across element boundaries', () => {
-    const root = document.createElement('div')
-    root.innerHTML = '<p>foo <strong>bar</strong> baz</p>'
-    const range = findTextRangeInRoot(root, 'foo bar')
-    expect(range).not.toBeNull()
-    expect(range!.toString()).toBe('foo bar')
-  })
-
-  it('applyDomAnnotation wraps highlight and refresh restores', () => {
-    const root = document.createElement('div')
-    root.innerHTML = '<p>alpha beta gamma</p>'
-    expect(applyDomAnnotation(root, 'highlight', 'beta', null, '#ff0')).toBe(true)
-    expect(root.querySelector('mark.annotation-highlight')).not.toBeNull()
-    root.innerHTML = '<p>alpha beta gamma</p>'
-    refreshTextMarkup(root, [
-      {
-        id: '1',
-        docPath: '/x',
-        type: 'highlight',
-        color: '#ff0',
-        selectedText: 'beta',
-        createdAt: '2026-01-01'
-      }
-    ])
-    expect(root.querySelector('mark.annotation-highlight')).not.toBeNull()
-  })
-
-  it('applyDomAnnotation on PDF textLayer uses span class', () => {
-    const root = document.createElement('div')
-    root.innerHTML =
-      '<div class="textLayer"><span>one</span><span> two</span><span> three</span></div>'
-    const range = findTextRangeInRoot(root, 'two three')
-    expect(range).not.toBeNull()
-    expect(applyDomAnnotation(root, 'underline', 'two three', range, '#00f')).toBe(true)
-    const spans = root.querySelectorAll('.textLayer span.annotation-underline')
-    expect(spans.length).toBeGreaterThan(0)
-  })
-
-  it('scrollToAnnotationText returns false when text missing', () => {
-    const root = document.createElement('div')
-    root.textContent = 'nothing here'
-    expect(scrollToAnnotationText(root, 'missing')).toBe(false)
-  })
-
-  it('resolveStoredMarkupColor uses annotation color', () => {
-    expect(resolveStoredMarkupColor({ type: 'highlight', color: '#abc' })).toBe(
-      'rgba(170, 187, 204, 0.24)'
-    )
-    expect(resolveStoredMarkupColor({ type: 'underline', color: undefined })).toContain('#')
   })
 })
 

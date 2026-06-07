@@ -1,3 +1,5 @@
+import { scrollElementIntoScrollParent } from '../viewers/pdfViewerPerf'
+
 const MARK_CLASS = 'hanstudy-find-match'
 const ACTIVE_CLASS = 'hanstudy-find-match-active'
 
@@ -82,7 +84,7 @@ function setActiveMark(marks: HTMLElement[], index: number): void {
     mark.classList.toggle(ACTIVE_CLASS, i === index)
   })
   const active = marks[index]
-  active?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  if (active) scrollElementIntoScrollParent(active, 16)
 }
 
 export function runDomFind(

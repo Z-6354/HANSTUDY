@@ -1,5 +1,5 @@
-import { ChevronDown, ChevronRight, FilePlus, Folder, FolderOpen, FolderPlus, Plus, RefreshCw, X } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { ChevronDown, ChevronRight, FilePlus, Folder, FolderOpen, FolderPlus, Library, Plus, RefreshCw, Upload, X } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { IconButton } from '../../components/IconButton'
 import { PathTooltipItem } from '../../components/PathTooltipItem'
 import type { FileEntry } from '../../types/global.d'
@@ -9,7 +9,10 @@ import { useWebLibraryStore } from '../../stores/webLibraryStore'
 import { useWorkspaceStore, SETTINGS_DOC_PATH } from '../../stores/workspaceStore'
 import { FileTypeIcon } from '../../utils/fileIcons'
 import { ConfirmModal, PromptModal } from './PromptModal'
-import { WebSnapshotsSection } from './WebSnapshotsSection'
+
+function pathsEqual(a: string, b: string): boolean {
+  return a.replace(/\\/g, '/').toLowerCase() === b.replace(/\\/g, '/').toLowerCase()
+}
 
 interface ContextMenuState {
   x: number
@@ -119,9 +122,17 @@ export function FileExplorer(): JSX.Element {
   } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<FileEntry | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [localLibraryPath, setLocalLibraryPath] = useState<string | null>(null)
+  const libraryInitRef = useRef(false)
 
   const activePath = documents.find((d) => d.id === activeDocumentId)?.path
-  const folderName = rootFolder ? rootFolder.split(/[/\\]/).pop() : null
+  const isLocalLibrary =
+    rootFolder != null && localLibraryPath != null && pathsEqual(rootFolder, localLibraryPath)
+  const folderName = isLocalLibrary
+    ? '我的资料库'
+    : rootFolder
+      ? rootFolder.split(/[/\\]/).pop()
+      : null
 
   const refresh = useCallback(async (): Promise<void> => {
     if (!rootFolder) {
@@ -136,6 +147,19 @@ export function FileExplorer(): JSX.Element {
   useEffect(() => {
     refresh()
   }, [refresh])
+
+  useEffect(() => {
+    if (libraryInitRef.current) return
+    libraryInitRef.current = true
+    void (async () => {
+      const path = await window.api.localLibrary.getPath()
+      setLocalLibraryPath(path)
+      if (!useWorkspaceStore.getState().rootFolder) {
+        const items = await window.api.fs.listDirectory(path)
+        setRootFolder(path, items)
+      }
+    })()
+  }, [setRootFolder])
 
   useEffect(() => {
     if (!webLibraryLoaded) void loadWebLibrary()
@@ -184,11 +208,10 @@ export function FileExplorer(): JSX.Element {
     setError(null)
     setContextMenu(null)
     try {
-      if (typeof window.api.dialog.importFiles !== 'function') {
-        setError('导入功能未加载，请重启应用（关闭后重新 npm run dev）')
-        return
-      }
-      const result = await window.api.dialog.importFiles(targetDir)
+      const result =
+        isLocalLibrary && pathsEqual(targetDir, localLibraryPath ?? '')
+          ? await window.api.localLibrary.import()
+          : await window.api.dialog.importFiles(targetDir)
       if (result.canceled) return
       const failed = result.imported.filter((f) => f.error)
       const succeeded = result.imported.filter((f) => !f.error)
@@ -209,6 +232,22 @@ export function FileExplorer(): JSX.Element {
     } catch (err) {
       setError(err instanceof Error ? err.message : '导入失败')
     }
+  }
+
+  const handleUploadToLibrary = async (): Promise<void> => {
+    if (!rootFolder) {
+      setError('资料库尚未就绪，请稍后重试')
+      return
+    }
+    await handleImportFiles(rootFolder)
+  }
+
+  const handleOpenLocalLibrary = async (): Promise<void> => {
+    setError(null)
+    const path = await window.api.localLibrary.getPath()
+    setLocalLibraryPath(path)
+    const items = await window.api.fs.listDirectory(path)
+    setRootFolder(path, items)
   }
 
   const runPrompt = async (value: string): Promise<void> => {
@@ -277,7 +316,16 @@ export function FileExplorer(): JSX.Element {
               setPrompt({ type: 'newFolder', parentDir: rootFolder!, defaultValue: '新建文件夹' })
             }
           />
+          <IconButton
+            icon={Upload}
+            label="上传文件"
+            disabled={!rootFolder}
+            onClick={() => void handleUploadToLibrary()}
+          />
           <IconButton icon={RefreshCw} label="刷新" disabled={!rootFolder} onClick={() => void refresh()} />
+          {!isLocalLibrary && (
+            <IconButton icon={Library} label="我的资料库" onClick={() => void handleOpenLocalLibrary()} />
+          )}
           <IconButton icon={Plus} label="打开文件" onClick={() => void handleOpenFile()} />
           <IconButton icon={FolderOpen} label="打开文件夹" onClick={() => void handleOpenFolder()} />
         </div>
@@ -324,7 +372,14 @@ export function FileExplorer(): JSX.Element {
 
       <div className="file-tree" onContextMenu={handleRootContextMenu}>
         {!rootFolder && (
-          <div className="explorer-hint">打开文件夹后，右键可导入、新建、删除文件</div>
+          <div className="explorer-hint">正在加载资料库…</div>
+        )}
+        {rootFolder && (
+          <div className="explorer-hint">
+            {isLocalLibrary
+              ? '我的资料库 · 可新建文件夹、上传、删除；也可打开其他文件夹'
+              : '外部文件夹 · 右键可导入、新建、删除；点击「我的资料库」返回默认库'}
+          </div>
         )}
 
         {folderName && (
@@ -350,8 +405,6 @@ export function FileExplorer(): JSX.Element {
           />
         ))}
       </div>
-
-      <WebSnapshotsSection />
 
       {recentFiles.length > 0 && (
         <div className="recent-section">

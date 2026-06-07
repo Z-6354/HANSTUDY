@@ -8,13 +8,13 @@ import {
   Paperclip,
   Pause,
   Send,
-  StickyNote,
+  NotebookPen,
   Trash2,
   X
 } from 'lucide-react'
 import { estimateTokens, getContextWindowForModel, getSystemPromptForMode } from '@shared/chatModes'
 import { getModelMeta } from '@shared/aiProviders'
-import { AskAIHint } from '../reader/annotations/SelectionToolbar'
+import { AskAIHint } from '../reader/selection/SelectionToolbar'
 import { AIMessageBubble } from './AIMessageBubble'
 import { ChatModeSelector } from './ChatModeSelector'
 import { ContextUsageRing } from './ContextUsageRing'
@@ -53,9 +53,12 @@ export function AIPanel(): JSX.Element {
     chatDocContext,
     attachDocumentToChat,
     detachDocumentFromChat,
+    activeNotePath,
+    setActiveNotePath,
+    setWorkbenchMode,
+    setSidebarTab,
     closeAIPanel
   } = useWorkspaceStore()
-
   const activeDoc = documents.find((d) => d.id === activeDocumentId)
 
   const {
@@ -319,26 +322,27 @@ export function AIPanel(): JSX.Element {
     }
   }
 
-  const handleInsertNote = async (content: string): Promise<void> => {
-    const noteDocPath =
-      chatAttachedDoc?.path ??
-      (activeDoc?.type !== 'settings' && activeDoc?.type !== 'web' ? activeDoc?.path : undefined)
-    if (!noteDocPath || !content.trim()) return
+  const handleInsertToNote = async (content: string): Promise<void> => {
+    if (!content.trim()) return
     setInsertFeedback(null)
     try {
-      await window.api.annotations.create({
-        docPath: noteDocPath,
-        type: 'note',
-        color: '#ffd500',
-        selectedText: selection?.text,
-        content: content.trim(),
-        range: selection?.range
-      })
-      useWorkspaceStore.getState().notifyAnnotationsChanged()
-      setInsertFeedback('已插入便签')
+      let notePath = activeNotePath
+      if (!notePath) {
+        const root = await window.api.notes.getRoot()
+        const title = `AI-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}`
+        notePath = await window.api.notes.createFile(root, title)
+        setActiveNotePath(notePath)
+        setWorkbenchMode('compose')
+        setSidebarTab('notes')
+      }
+      const block = selection?.text
+        ? `> ${selection.text.slice(0, 200).replace(/\n/g, '\n> ')}\n\n${content.trim()}`
+        : content.trim()
+      await window.api.notes.append(notePath, block)
+      setInsertFeedback('已写入笔记')
       window.setTimeout(() => setInsertFeedback(null), 2000)
     } catch (err) {
-      setInsertFeedback(err instanceof Error ? err.message : '插入便签失败')
+      setInsertFeedback(err instanceof Error ? err.message : '写入笔记失败')
     }
   }
 
@@ -370,10 +374,7 @@ export function AIPanel(): JSX.Element {
     deleteSession(sessionId)
   }
 
-  const canInsertNote = !!(
-    chatAttachedDoc?.path ??
-    (activeDoc?.type !== 'settings' && activeDoc?.type !== 'web' ? activeDoc?.path : undefined)
-  )
+  const canInsertToNote = true
   const readableActiveDoc =
     activeDoc && activeDoc.type !== 'settings' && activeDoc.type !== 'web' ? activeDoc : null
 
@@ -505,13 +506,13 @@ export function AIPanel(): JSX.Element {
                 msg.content &&
                 !streamingThis &&
                 !msg.isError &&
-                canInsertNote && (
+                canInsertToNote && (
                 <IconButton
-                  icon={StickyNote}
-                  label="插入便签"
+                  icon={NotebookPen}
+                  label="写入笔记"
                   className="ai-insert-btn"
                   size={14}
-                  onClick={() => void handleInsertNote(msg.content)}
+                  onClick={() => void handleInsertToNote(msg.content)}
                 />
               )}
             </AIMessageBubble>

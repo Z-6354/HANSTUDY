@@ -1,30 +1,3 @@
-export type AnnotationType = 'highlight' | 'underline' | 'note' | 'pen' | 'rect'
-
-export type AnnotationTool =
-  | 'select'
-  | 'pen'
-  | 'rect'
-  | 'highlight'
-  | 'underline'
-  | 'note'
-  | 'eraser'
-
-export interface ShapePoint {
-  /** 0–1，相对文档内容表面宽度 */
-  x: number
-  /** 0–1，相对文档内容表面高度 */
-  y: number
-}
-
-export interface DrawShape {
-  points?: ShapePoint[]
-  x?: number
-  y?: number
-  width?: number
-  height?: number
-  strokeWidth?: number
-}
-
 export interface TextRange {
   startLine: number
   startColumn: number
@@ -32,25 +5,6 @@ export interface TextRange {
   endColumn: number
   startOffset?: number
   endOffset?: number
-}
-
-export interface PdfAnchor {
-  page: number
-  x: number
-  y: number
-}
-
-export interface Annotation {
-  id: string
-  docPath: string
-  type: AnnotationType
-  color: string
-  selectedText?: string
-  content?: string
-  range?: TextRange
-  pdfAnchor?: PdfAnchor
-  shape?: DrawShape
-  createdAt: string
 }
 
 export interface AISettings {
@@ -88,7 +42,6 @@ export interface TextSelectionContext {
   docPath: string
   text: string
   range?: TextRange
-  pdfAnchor?: PdfAnchor
 }
 
 export interface FileEntry {
@@ -96,3 +49,5 @@ export interface FileEntry {
   path: string
   isDirectory: boolean
 }
+
+export type WorkbenchMode = 'browse' | 'compose'

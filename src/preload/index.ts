@@ -1,15 +1,8 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron'
 import type { AppSettings } from '../shared/appSettings'
-import type { AISettings, Annotation, TextSelectionContext } from '../shared/types'
+import type { AISettings, TextSelectionContext } from '../shared/types'
 import type { WebDiagnosticProbeResult, WebDiagnosticReport } from '../shared/webDiagnostics'
-import type { SaveWebSnapshotInput, WebSnapshotMeta } from '../shared/webSnapshot'
-import type {
-  SaveWebCredentialInput,
-  WebBookmark,
-  WebCredentialItem,
-  WebHistoryEntry,
-  WebPhoneEntry
-} from '../shared/webLibrary'
+import type { SaveWebCredentialInput, WebBookmark, WebCredentialItem, WebHistoryEntry, WebPhoneEntry } from '../shared/webLibrary'
 import type { WebGuestBounds, WebGuestEvent } from '../shared/webGuest'
 import type { McpServerState } from '../shared/mcp/types'
 import type { SkillListItem } from '../shared/skills'
@@ -18,7 +11,7 @@ import { IPC } from '../shared/ipc/channels'
 export interface OpenedFileInfo {
   path: string
   name: string
-  type: 'txt' | 'md' | 'pdf' | 'docx' | 'web-snapshot' | 'web' | 'unknown'
+  type: 'txt' | 'md' | 'pdf' | 'docx' | 'web' | 'unknown'
 }
 
 export interface FileEntry {
@@ -32,7 +25,7 @@ export interface FolderOpenResult {
   files: FileEntry[]
 }
 
-export type { Annotation, AISettings, TextSelectionContext, SkillListItem, WebSnapshotMeta }
+export type { AISettings, TextSelectionContext, SkillListItem }
 
 const api = {
   window: {
@@ -40,6 +33,7 @@ const api = {
     maximize: (): Promise<void> => ipcRenderer.invoke('window:maximize'),
     close: (): Promise<void> => ipcRenderer.invoke('window:close'),
     isMaximized: (): Promise<boolean> => ipcRenderer.invoke('window:isMaximized'),
+    resetPageZoom: (): Promise<void> => ipcRenderer.invoke('window:resetPageZoom'),
     onMaximizedChanged: (cb: (maximized: boolean) => void): (() => void) => {
       const handler = (_e: IpcRendererEvent, maximized: boolean): void => cb(maximized)
       ipcRenderer.on('window:maximized-changed', handler)
@@ -69,7 +63,11 @@ const api = {
   fs: {
     listDirectory: (dirPath: string): Promise<FileEntry[]> =>
       ipcRenderer.invoke('fs:listDirectory', dirPath),
-    readText: (filePath: string): Promise<string> => ipcRenderer.invoke('fs:readText', filePath),
+    readText: (
+      filePath: string
+    ): Promise<{ content: string; sizeBytes: number }> => ipcRenderer.invoke('fs:readText', filePath),
+    writeText: (filePath: string, content: string): Promise<boolean> =>
+      ipcRenderer.invoke('fs:writeText', filePath, content),
     readBinary: (filePath: string): Promise<Uint8Array> =>
       ipcRenderer.invoke('fs:readBinary', filePath),
     getFileInfo: (filePath: string): Promise<OpenedFileInfo & { supported: boolean }> =>
@@ -94,16 +92,23 @@ const api = {
     ): Promise<OpenedFileInfo & { supported: boolean }> =>
       ipcRenderer.invoke('fs:rename', targetPath, newName)
   },
-  annotations: {
-    list: (docPath: string): Promise<Annotation[]> =>
-      ipcRenderer.invoke('annotations:list', docPath),
-    create: (input: Omit<Annotation, 'id' | 'createdAt'>): Promise<Annotation> =>
-      ipcRenderer.invoke('annotations:create', input),
-    update: (id: string, patch: Partial<Annotation>): Promise<Annotation | null> =>
-      ipcRenderer.invoke('annotations:update', id, patch),
-    delete: (id: string): Promise<boolean> => ipcRenderer.invoke('annotations:delete', id),
-    exportMarkdown: (docPath: string): Promise<string> =>
-      ipcRenderer.invoke('annotations:export', docPath)
+  notes: {
+    getRoot: (): Promise<string> => ipcRenderer.invoke(IPC.notes.getRoot),
+    list: (dirPath?: string): Promise<FileEntry[]> =>
+      ipcRenderer.invoke(IPC.notes.list, dirPath),
+    read: (filePath: string): Promise<string> => ipcRenderer.invoke(IPC.notes.read, filePath),
+    write: (filePath: string, content: string): Promise<boolean> =>
+      ipcRenderer.invoke(IPC.notes.write, filePath, content),
+    append: (filePath: string, chunk: string): Promise<boolean> =>
+      ipcRenderer.invoke(IPC.notes.append, filePath, chunk),
+    createFile: (dirPath: string, fileName: string): Promise<string> =>
+      ipcRenderer.invoke(IPC.notes.createFile, dirPath, fileName),
+    createFolder: (dirPath: string, folderName: string): Promise<string> =>
+      ipcRenderer.invoke(IPC.notes.createFolder, dirPath, folderName),
+    delete: (targetPath: string): Promise<boolean> =>
+      ipcRenderer.invoke(IPC.notes.delete, targetPath),
+    rename: (targetPath: string, newName: string): Promise<string> =>
+      ipcRenderer.invoke(IPC.notes.rename, targetPath, newName)
   },
   settings: {
     get: (): Promise<AISettings> => ipcRenderer.invoke('settings:get'),
@@ -117,12 +122,6 @@ const api = {
   },
   web: {
     openExternal: (url: string): Promise<boolean> => ipcRenderer.invoke('web:openExternal', url),
-    saveSnapshot: (input: SaveWebSnapshotInput): Promise<WebSnapshotMeta> =>
-      ipcRenderer.invoke('web:saveSnapshot', input),
-    listSnapshots: (): Promise<WebSnapshotMeta[]> => ipcRenderer.invoke('web:listSnapshots'),
-    getSnapshotMeta: (pdfPath: string): Promise<WebSnapshotMeta | null> =>
-      ipcRenderer.invoke('web:getSnapshotMeta', pdfPath),
-    deleteSnapshot: (id: string): Promise<boolean> => ipcRenderer.invoke('web:deleteSnapshot', id),
     runDiagnostics: (): Promise<WebDiagnosticReport> => ipcRenderer.invoke('web:runDiagnostics'),
     probeUrl: (url: string): Promise<WebDiagnosticProbeResult> =>
       ipcRenderer.invoke('web:probeUrl', url)

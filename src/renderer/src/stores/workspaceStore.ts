@@ -3,26 +3,19 @@ import { resolveWebInput, webUrlKey } from '@shared/webCrop'
 import { webDisplayTitle } from '@shared/webLibrary'
 import { useWebLibraryStore } from './webLibraryStore'
 import { getSearchEngine, getWebBrowseLayoutPrefs } from './appSettingsStore'
-import { formatWebSnapshotTabTitle, type WebSnapshotMeta } from '@shared/webSnapshot'
-import type { AnnotationTool, ChatMessage, TextSelectionContext } from '../types/global.d'
+import type { ChatMessage, TextSelectionContext, WorkbenchMode } from '../types/global.d'
 
-export type DocumentType = 'txt' | 'md' | 'pdf' | 'docx' | 'web' | 'web-snapshot' | 'settings' | 'unknown'
+export type DocumentType = 'txt' | 'md' | 'pdf' | 'docx' | 'web' | 'settings' | 'unknown'
 export type SidebarTab = 'explorer' | 'notes' | 'web'
 export type SettingsSection = 'system' | 'skill' | 'mcp'
 
-export type LayoutPanelId = 'sidebar' | 'tabBar' | 'annotationToolbar' | 'aiPanel'
+export type LayoutPanelId = 'sidebar' | 'tabBar' | 'aiPanel'
 
 export type ViewerCommandKind = 'find' | 'selectAll'
 
 export interface ViewerCommand {
   seq: number
   kind: ViewerCommandKind
-}
-
-export interface FloatingToolbarState {
-  x: number
-  y: number
-  minimized: boolean
 }
 
 export const SETTINGS_DOC_PATH = '__hanstudy_settings__'
@@ -69,20 +62,14 @@ interface WorkspaceState {
   showAIPanel: boolean
   showSidebar: boolean
   showTabBar: boolean
-  showAnnotationToolbar: boolean
-  floatingToolbar: FloatingToolbarState
+  workbenchMode: WorkbenchMode
+  activeNotePath: string | null
   settingsSection: SettingsSection
   sidebarTab: SidebarTab
   selection: TextSelectionContext | null
-  focusAnnotationId: string | null
   aiDraft: string
-  annotationTick: number
-  annotationTool: AnnotationTool
-  annotationColor: string
-  annotationStrokeWidth: number
   chatAttachedDoc: { path: string; name: string } | null
   chatDocContext: string | null
-  webSnapshotTick: number
   webSessions: Record<string, WebViewSession>
   webNavSeq: number
   webNavAction: { seq: number; action: WebNavAction; url?: string } | null
@@ -100,7 +87,6 @@ interface WorkspaceState {
   findStepForward: boolean
   openDocument: (doc: Omit<OpenDocument, 'id'>) => void
   openWebPage: (url: string) => boolean
-  openWebSnapshot: (meta: WebSnapshotMeta) => void
   closeDocument: (id: string) => void
   closeOtherDocuments: (id: string) => void
   closeAllDocuments: () => void
@@ -115,20 +101,15 @@ interface WorkspaceState {
   toggleLayoutPanel: (panel: LayoutPanelId) => void
   openSidebar: (tab?: SidebarTab) => void
   closeSidebar: () => void
-  setFloatingToolbar: (patch: Partial<FloatingToolbarState>) => void
   openSettings: (section?: SettingsSection) => void
   setSettingsSection: (section: SettingsSection) => void
   setSidebarTab: (tab: SidebarTab) => void
+  setWorkbenchMode: (mode: WorkbenchMode) => void
+  setActiveNotePath: (path: string | null) => void
   setSelection: (selection: TextSelectionContext | null) => void
-  setFocusAnnotationId: (id: string | null) => void
   setAiDraft: (draft: string) => void
-  notifyAnnotationsChanged: () => void
-  setAnnotationTool: (tool: AnnotationTool) => void
-  setAnnotationColor: (color: string) => void
-  setAnnotationStrokeWidth: (width: number) => void
   attachDocumentToChat: (path: string, name: string, content: string) => void
   detachDocumentFromChat: () => void
-  notifyWebSnapshotsChanged: () => void
   setWebSession: (session: WebViewSession | null) => void
   clearWebSession: (docId: string) => void
   updateWebSession: (docId: string, patch: Partial<Omit<WebViewSession, 'docId'>>) => void
@@ -148,20 +129,19 @@ interface WorkspaceState {
 }
 
 const RECENT_KEY = 'hanstudy-recent-files'
-const FLOATING_TOOLBAR_KEY = 'hanstudy-floating-toolbar'
+const WORKBENCH_MODE_KEY = 'hanstudy-workbench-mode'
 
-function loadFloatingToolbar(): FloatingToolbarState {
+function loadWorkbenchMode(): WorkbenchMode {
   try {
-    const raw = localStorage.getItem(FLOATING_TOOLBAR_KEY)
-    if (raw) return JSON.parse(raw) as FloatingToolbarState
+    const raw = localStorage.getItem(WORKBENCH_MODE_KEY)
+    return raw === 'compose' ? 'compose' : 'browse'
   } catch {
-    // ignore
+    return 'browse'
   }
-  return { x: 0, y: 0, minimized: false }
 }
 
-function saveFloatingToolbar(state: FloatingToolbarState): void {
-  localStorage.setItem(FLOATING_TOOLBAR_KEY, JSON.stringify(state))
+function saveWorkbenchMode(mode: WorkbenchMode): void {
+  localStorage.setItem(WORKBENCH_MODE_KEY, mode)
 }
 
 function loadRecent(): string[] {
@@ -186,20 +166,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   showAIPanel: true,
   showSidebar: true,
   showTabBar: true,
-  showAnnotationToolbar: true,
-  floatingToolbar: loadFloatingToolbar(),
+  workbenchMode: loadWorkbenchMode(),
+  activeNotePath: null,
   settingsSection: 'system' as SettingsSection,
   sidebarTab: 'explorer',
   selection: null,
-  focusAnnotationId: null,
   aiDraft: '',
-  annotationTick: 0,
-  annotationTool: 'select' as AnnotationTool,
-  annotationColor: '#f59e0b',
-  annotationStrokeWidth: 2,
   chatAttachedDoc: null,
   chatDocContext: null,
-  webSnapshotTick: 0,
   webSessions: {},
   webNavSeq: 0,
   webNavAction: null,
@@ -272,18 +246,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     return true
   },
 
-  openWebSnapshot: (meta) => {
-    get().openDocument({
-      path: meta.pdfPath,
-      name: formatWebSnapshotTabTitle(meta.title),
-      type: 'web-snapshot'
-    })
-  },
-
-  notifyWebSnapshotsChanged: () => {
-    set((state) => ({ webSnapshotTick: state.webSnapshotTick + 1 }))
-  },
-
   setWebSession: (session) =>
     set((state) => {
       if (!session) return { webSessions: {} }
@@ -326,8 +288,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   clearWebNavAction: () => set({ webNavAction: null }),
 
   closeDocument: (id) => {
+    const closed = get().documents.find((d) => d.id === id)
+    if (closed?.type === 'web') {
+      void window.api.webGuest.destroyDoc(id)
+    }
     set((state) => {
-      const closed = state.documents.find((d) => d.id === id)
       const documents = state.documents.filter((d) => d.id !== id)
       let activeDocumentId = state.activeDocumentId
       if (activeDocumentId === id) {
@@ -348,6 +313,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   closeOtherDocuments: (id) => {
+    const removed = get().documents.filter((d) => d.id !== id)
+    for (const doc of removed) {
+      if (doc.type === 'web') void window.api.webGuest.destroyDoc(doc.id)
+    }
     set((state) => {
       const kept = state.documents.find((d) => d.id === id)
       const documents = state.documents.filter((d) => d.id === id)
@@ -369,7 +338,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     })
   },
 
-  closeAllDocuments: () =>
+  closeAllDocuments: () => {
+    for (const doc of get().documents) {
+      if (doc.type === 'web') void window.api.webGuest.destroyDoc(doc.id)
+    }
     set({
       documents: [],
       activeDocumentId: null,
@@ -377,7 +349,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       webSessions: {},
       chatAttachedDoc: null,
       chatDocContext: null
-    }),
+    })
+  },
 
   reorderDocuments: (fromId, toId) => {
     set((state) => {
@@ -391,7 +364,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     })
   },
 
-  setActiveDocument: (id) => set({ activeDocumentId: id, selection: null, focusAnnotationId: null }),
+  setActiveDocument: (id) => set({ activeDocumentId: id, selection: null }),
 
   renameDocument: (id, name) =>
     set((state) => ({
@@ -424,8 +397,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           return { showSidebar: !state.showSidebar }
         case 'tabBar':
           return { showTabBar: !state.showTabBar }
-        case 'annotationToolbar':
-          return { showAnnotationToolbar: !state.showAnnotationToolbar }
         case 'aiPanel':
           return { showAIPanel: !state.showAIPanel }
         default:
@@ -442,14 +413,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   closeSidebar: () => set({ showSidebar: false }),
-
-  setFloatingToolbar: (patch) => {
-    set((state) => {
-      const floatingToolbar = { ...state.floatingToolbar, ...patch }
-      saveFloatingToolbar(floatingToolbar)
-      return { floatingToolbar }
-    })
-  },
 
   openSettings: (section = 'system') => {
     const existing = get().documents.find((d) => d.path === SETTINGS_DOC_PATH)
@@ -469,20 +432,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   setSidebarTab: (tab) => set({ sidebarTab: tab }),
 
+  setWorkbenchMode: (mode) => {
+    saveWorkbenchMode(mode)
+    set({ workbenchMode: mode })
+  },
+
+  setActiveNotePath: (path) => set({ activeNotePath: path }),
+
   setSelection: (selection) => set({ selection }),
 
-  setFocusAnnotationId: (id) => set({ focusAnnotationId: id }),
-
   setAiDraft: (draft) => set({ aiDraft: draft }),
-
-  notifyAnnotationsChanged: () =>
-    set((state) => ({ annotationTick: state.annotationTick + 1 })),
-
-  setAnnotationTool: (tool) => set({ annotationTool: tool }),
-
-  setAnnotationColor: (color) => set({ annotationColor: color }),
-
-  setAnnotationStrokeWidth: (width) => set({ annotationStrokeWidth: width }),
 
   attachDocumentToChat: (path, name, content) =>
     set({ chatAttachedDoc: { path, name }, chatDocContext: content }),

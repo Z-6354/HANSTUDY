@@ -23,7 +23,6 @@ interface MenuGroup {
 const LAYOUT_PANELS: { id: LayoutPanelId; label: string; shortcut?: string }[] = [
   { id: 'sidebar', label: '资源管理器', shortcut: 'Ctrl+B' },
   { id: 'tabBar', label: '标签栏' },
-  { id: 'annotationToolbar', label: '标注工具栏' },
   { id: 'aiPanel', label: 'AI 助手', shortcut: 'Ctrl+Shift+A' }
 ]
 
@@ -42,7 +41,6 @@ export function TitleBar(): JSX.Element {
     openSettings,
     showSidebar,
     showTabBar,
-    showAnnotationToolbar,
     toggleLayoutPanel,
     setSidebarTab,
     dispatchViewerCommand
@@ -86,8 +84,6 @@ export function TitleBar(): JSX.Element {
         return showSidebar
       case 'tabBar':
         return showTabBar
-      case 'annotationToolbar':
-        return showAnnotationToolbar
       case 'aiPanel':
         return showAIPanel
       default:

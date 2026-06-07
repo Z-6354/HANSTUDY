@@ -3,6 +3,7 @@ import { join } from 'path'
 import { IPC } from '../../shared/ipc/channels'
 import { initWebGuestService } from '../web/webGuestService'
 import { getAppContext } from './AppContext'
+import { lockPageZoomForWindow } from './pageZoomLock'
 
 const isDev = !app.isPackaged
 
@@ -28,6 +29,23 @@ export function createMainWindow(): BrowserWindow {
 
   context.mainWindow = win
 
+  const lockPageZoom = (): void => {
+    lockPageZoomForWindow(win)
+  }
+
+  win.webContents.on('did-finish-load', lockPageZoom)
+  win.webContents.on('zoom-changed', lockPageZoom)
+
+  // 兜底：尽快复位整页 zoom（含触控板 pinch 误触后的短暂放大）
+  const zoomWatch = setInterval(() => {
+    if (win.isDestroyed()) {
+      clearInterval(zoomWatch)
+      return
+    }
+    lockPageZoom()
+  }, 100)
+  win.on('closed', () => clearInterval(zoomWatch))
+
   const notifyMaximizeChanged = (): void => {
     if (!win) return
     win.webContents.send(IPC.window.maximizedChanged, win.isMaximized())
@@ -47,9 +65,33 @@ export function createMainWindow(): BrowserWindow {
     return { action: 'deny' }
   })
 
-  // 阻止系统级 F11 全屏；专注模式由渲染进程处理
+  // 阻止系统级 F11 全屏；禁止 Chromium 整页缩放（Ctrl+滚轮 / pinch / 快捷键）
   win.webContents.on('before-input-event', (event, input) => {
     if (input.type === 'keyDown' && input.key === 'F11') {
+      event.preventDefault()
+      return
+    }
+
+    if (input.type === 'mouseWheel' && (input.control || input.meta)) {
+      event.preventDefault()
+      return
+    }
+
+    if (
+      input.type === 'gestureBegin' ||
+      input.type === 'gestureUpdate' ||
+      input.type === 'gestureEnd'
+    ) {
+      event.preventDefault()
+      lockPageZoom()
+      return
+    }
+
+    if (input.type !== 'keyDown') return
+    const mod = input.control || input.meta
+    if (!mod) return
+    const key = input.key
+    if (key === '=' || key === '+' || key === '-' || key === '0' || key === 'Add' || key === 'Subtract') {
       event.preventDefault()
     }
   })

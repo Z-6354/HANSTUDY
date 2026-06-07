@@ -1,9 +1,7 @@
-import { copyFile, cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'fs/promises'
+import { readFile, copyFile, cp, mkdir, readdir, rename, rm, stat, writeFile } from 'fs/promises'
 import mammoth from 'mammoth'
 import { basename, extname, join } from 'path'
-import { isWebSnapshotPdfPath } from '../../shared/webSnapshot'
 import { extractPdfText } from './pdfTextService'
-import { getWebSnapshotDocumentContext } from '../web/webSnapshotService'
 
 export const SUPPORTED_EXTENSIONS = new Set([
   '.txt',
@@ -20,8 +18,7 @@ export interface FileEntry {
 
 export function getFileType(
   filePath: string
-): 'txt' | 'md' | 'pdf' | 'docx' | 'web-snapshot' | 'unknown' {
-  if (isWebSnapshotPdfPath(filePath)) return 'web-snapshot'
+): 'txt' | 'md' | 'pdf' | 'docx' | 'unknown' {
   const ext = extname(filePath).toLowerCase()
   if (ext === '.pdf') return 'pdf'
   if (ext === '.docx') return 'docx'
@@ -31,12 +28,45 @@ export function getFileType(
 }
 
 export function isSupportedDocumentPath(filePath: string): boolean {
-  if (isWebSnapshotPdfPath(filePath)) return true
   return SUPPORTED_EXTENSIONS.has(extname(filePath).toLowerCase())
 }
 
 export async function readTextFile(filePath: string): Promise<string> {
-  return readFile(filePath, 'utf-8')
+  const doc = await readTextDocument(filePath)
+  return doc.content
+}
+
+export async function readTextDocument(
+  filePath: string
+): Promise<{ content: string; sizeBytes: number }> {
+  const [buffer, fileStat] = await Promise.all([readFile(filePath), stat(filePath)])
+  return { content: decodeTextBuffer(buffer), sizeBytes: fileStat.size }
+}
+
+function decodeTextBuffer(buffer: Buffer): string {
+  if (buffer.length === 0) return ''
+
+  // UTF-8 BOM
+  if (buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
+    return buffer.subarray(3).toString('utf-8')
+  }
+
+  const utf8 = buffer.toString('utf-8')
+  if (!utf8.includes('\uFFFD')) return utf8
+
+  if (process.platform === 'win32') {
+    try {
+      return new TextDecoder('gbk').decode(buffer)
+    } catch {
+      // ignore
+    }
+  }
+
+  return utf8
+}
+
+export async function writeTextFile(filePath: string, content: string): Promise<void> {
+  await writeFile(filePath, content, 'utf-8')
 }
 
 export async function readBinaryFile(filePath: string): Promise<Uint8Array> {
@@ -187,10 +217,6 @@ export interface DocumentContext {
 }
 
 export async function getDocumentContext(filePath: string): Promise<DocumentContext> {
-  if (isWebSnapshotPdfPath(filePath)) {
-    return getWebSnapshotDocumentContext(filePath)
-  }
-
   const fileName = basename(filePath)
   const ext = extname(filePath).toLowerCase()
   let content = ''

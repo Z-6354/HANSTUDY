@@ -310,7 +310,7 @@ export function SystemConfigPanel(): JSX.Element {
               )
             }}
           />
-          打开网页时收起左侧栏（文件 / 标注 / 网页）
+          打开网页时收起左侧栏（文件 / 笔记 / 网页）
         </label>
         <label className="settings-checkbox">
           <input
@@ -328,8 +328,8 @@ export function SystemConfigPanel(): JSX.Element {
         </label>
       </div>
 
-      <h2 className="settings-section-title settings-section-title-spaced">标注后端</h2>
-      <p className="settings-section-desc">Java 后端负责标注持久化；不可用时自动回退到 Node 本地存储。</p>
+      <h2 className="settings-section-title settings-section-title-spaced">Java 后端</h2>
+      <p className="settings-section-desc">可选 Java 后端（:17890），后续可扩展 AI / 索引等服务。</p>
       <div className="settings-form backend-status-panel">
         <div className="backend-status-grid">
           <span>JAR 包</span>

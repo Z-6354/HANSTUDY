@@ -5,7 +5,6 @@ import { join } from 'path'
 import type { FileEntry } from '../../shared/types'
 import {
   importFilesToDirectory,
-  isSupportedDocumentPath,
   listDirectory,
   type ImportResult
 } from './fileService'
@@ -24,10 +23,7 @@ export async function ensureLocalLibraryDir(): Promise<string> {
 
 export async function listLocalLibraryFiles(): Promise<FileEntry[]> {
   const root = await ensureLocalLibraryDir()
-  const items = await listDirectory(root)
-  return items
-    .filter((entry) => !entry.isDirectory && isSupportedDocumentPath(entry.path))
-    .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
+  return listDirectory(root)
 }
 
 export async function importFilesToLocalLibrary(sourcePaths: string[]): Promise<ImportResult[]> {

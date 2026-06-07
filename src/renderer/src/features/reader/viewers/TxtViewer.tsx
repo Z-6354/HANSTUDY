@@ -1,17 +1,31 @@
 import Editor from '@monaco-editor/react'
+import { ChevronLeft, ChevronRight, Pencil, Save, ZoomIn, ZoomOut } from 'lucide-react'
 import type * as MonacoApi from 'monaco-editor'
 import type { editor as MonacoEditor } from 'monaco-editor'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { resolveMarkupColor } from '../../../features/reader/annotations/annotationMarkup'
-import { monacoRangeToContentRects } from '../../../features/reader/annotations/markupOverlayUtils'
-import { useBindAnnotationSurface } from '../../../features/reader/annotations/useBindAnnotationSurface'
-import { useRegisterMarkupResolver } from '../../../features/reader/annotations/useRegisterMarkupResolver'
-import { NoteInputModal, SelectionToolbar } from '../../../features/reader/annotations/SelectionToolbar'
-import { useAnnotations } from '../../../features/reader/annotations/useAnnotations'
-import { useMonacoAnnotationToolUndo } from '../../../features/reader/annotations/useAnnotationToolUndo'
-import { useViewerCommand } from '../../../features/reader/find/useViewerCommand'
-import type { Annotation, TextRange } from '../../../types/global.d'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { IconButton } from '../../../components/IconButton'
+import { SelectionToolbar } from '../selection/SelectionToolbar'
+import {
+  useDomTextSelection,
+  useSelectionToolbarEffect
+} from '../selection/useDomTextSelection'
+import { useViewerCommand } from '../find/useViewerCommand'
 import { useWorkspaceStore } from '../../../stores/workspaceStore'
+import { TextDocumentShell } from './TextDocumentShell'
+import { useLazyTextFile } from './useLazyTextFile'
+import {
+  buildTxtChapters,
+  chapterIndexForLine,
+  outlineItemsFromChapters
+} from './textChapters'
+import { formatChapterContent, isChapterTitleLike } from './txtChapterFormat'
+import { TextChapterThumbnailPanel } from './TextChapterThumbnailPanel'
+import { defineHanstudyEditorTheme, HANSTUDY_EDITOR_THEME } from './monacoTheme'
+import { TXT_SOURCE_EDITOR_OPTIONS } from './monacoEditorOptions'
+import { useMonacoHeight } from './useMonacoHeight'
+import { useMonacoEditorDispose } from './useMonacoEditorDispose'
+import { useTxtChapterWheelNav, type ChapterScrollAnchor } from './useTxtChapterWheelNav'
+import { useTxtZoom } from './useTxtZoom'
 
 interface TxtViewerProps {
   filePath: string
@@ -19,105 +33,85 @@ interface TxtViewerProps {
 }
 
 export function TxtViewer({ filePath, isActive = true }: TxtViewerProps): JSX.Element {
-  const [content, setContent] = useState<string>('')
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { content, isLargeFile, loading, error, dirty, saving, setContent, save, revert } =
+    useLazyTextFile(filePath)
+  const [editMode, setEditMode] = useState(false)
+  const [currentChapter, setCurrentChapter] = useState(0)
   const [toolbarRect, setToolbarRect] = useState<DOMRect | null>(null)
-  const [pendingRange, setPendingRange] = useState<TextRange | null>(null)
   const [pendingText, setPendingText] = useState('')
-  const [showNoteModal, setShowNoteModal] = useState(false)
   const [monacoMounted, setMonacoMounted] = useState(false)
 
-  const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null)
-  const monacoRef = useRef<typeof MonacoApi | null>(null)
-  const surfaceRef = useRef<HTMLElement | null>(null)
-  const monacoApplyingRef = useRef(false)
-  const selectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const bindAnnotationSurface = useBindAnnotationSurface()
+  const chapterScrollRef = useRef<HTMLDivElement>(null)
+  const chapterBodyRef = useRef<HTMLDivElement>(null)
+  const readerRef = useRef<HTMLElement>(null)
+  const editorHostRef = useRef<HTMLDivElement | null>(null)
+  const contentRef = useRef<HTMLDivElement | null>(null)
+  const editorRef = useMonacoEditorDispose()
+  const sourceSurfaceRef = useRef<HTMLElement | null>(null)
+  const { containerRef: setEditorContainerNode, height: monacoHeight } = useMonacoHeight()
 
-  const { annotations, create, remove } = useAnnotations(filePath, isActive)
-  const { sendToAI, setSelection, focusAnnotationId, setFocusAnnotationId, annotationTool, closeFindBar } =
-    useWorkspaceStore()
-  useMonacoAnnotationToolUndo(
-    annotations,
-    remove,
-    () => editorRef.current?.getDomNode() ?? null,
-    isActive && monacoMounted
+  const bindEditorContainerRef = useCallback(
+    (node: HTMLDivElement | null): void => {
+      editorHostRef.current = node
+      setEditorContainerNode(node)
+    },
+    [setEditorContainerNode]
   )
 
+  const { sendToAI, setSelection, closeFindBar } = useWorkspaceStore()
+
+  const { bindZoomLabelRef, zoomIn, zoomOut, flushPendingZoom, initialMonacoFontSize } = useTxtZoom({
+    filePath,
+    editMode,
+    editorRef,
+    readerRef,
+    editorHostRef,
+    isActive,
+    wheelHostRef: contentRef
+  })
+
+  const chapters = useMemo(() => buildTxtChapters(content), [content])
+  const outlineItems = useMemo(() => outlineItemsFromChapters(chapters), [chapters])
+  const activeChapter = chapters[currentChapter] ?? chapters[0]
+  const chapterBlocks = useMemo(
+    () =>
+      activeChapter
+        ? formatChapterContent(activeChapter.title, activeChapter.content)
+        : [],
+    [activeChapter]
+  )
+
+  const selectionEnabled =
+    isActive && !loading && (editMode ? monacoMounted : Boolean(chapterBodyRef.current))
+  const { selection: domSelection, clearSelection } = useDomTextSelection(
+    filePath,
+    editMode ? sourceSurfaceRef : chapterBodyRef,
+    selectionEnabled
+  )
+
+  useSelectionToolbarEffect(domSelection, setSelection, setToolbarRect, setPendingText)
+
   useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-    setError(null)
-
-    window.api.fs
-      .readText(filePath)
-      .then((text) => {
-        if (!cancelled) setContent(text)
-      })
-      .catch((err: Error) => {
-        if (!cancelled) setError(err.message || '无法读取文件')
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-
-    return () => {
-      cancelled = true
-    }
+    setEditMode(false)
+    setCurrentChapter(0)
   }, [filePath])
 
-  const resolveMarkupRects = useCallback(
-    (ann: Annotation) => {
-      const editor = editorRef.current
-      const monaco = monacoRef.current
-      const surface = surfaceRef.current
-      if (!editor || !monaco || !surface || !ann.range) return []
-      return monacoRangeToContentRects(editor, monaco, ann.range, surface)
-    },
-    [monacoMounted, content]
-  )
-  useRegisterMarkupResolver(resolveMarkupRects, isActive && monacoMounted)
+  useEffect(() => {
+    if (currentChapter >= chapters.length && chapters.length > 0) {
+      setCurrentChapter(0)
+    }
+  }, [chapters.length, currentChapter])
 
   useEffect(() => {
-    if (!focusAnnotationId) return
-    const ann = annotations.find((a) => a.id === focusAnnotationId)
-    if (!ann) {
-      setFocusAnnotationId(null)
-      return
-    }
-    if (!ann.range) {
-      setFocusAnnotationId(null)
-      return
-    }
-    const editor = editorRef.current
-    const monaco = monacoRef.current
-    if (!editor || !monaco) return
-    editor.revealRangeInCenter(
-      new monaco.Range(
-        ann.range.startLine,
-        ann.range.startColumn,
-        ann.range.endLine,
-        ann.range.endColumn
-      )
-    )
-    editor.setSelection(
-      new monaco.Range(
-        ann.range.startLine,
-        ann.range.startColumn,
-        ann.range.endLine,
-        ann.range.endColumn
-      )
-    )
-    setFocusAnnotationId(null)
-  }, [focusAnnotationId, annotations, setFocusAnnotationId, monacoMounted])
+    editorRef.current?.updateOptions({ readOnly: !editMode })
+  }, [editMode])
 
-  useViewerCommand(isActive, 'find', () => {
+  useViewerCommand(isActive && editMode, 'find', () => {
     editorRef.current?.getAction('actions.find')?.run()
     closeFindBar()
   })
 
-  useViewerCommand(isActive, 'selectAll', () => {
+  useViewerCommand(isActive && editMode, 'selectAll', () => {
     const editor = editorRef.current
     const model = editor?.getModel()
     if (!editor || !model) return
@@ -127,177 +121,233 @@ export function TxtViewer({ filePath, isActive = true }: TxtViewerProps): JSX.El
 
   const closeToolbar = (): void => {
     setToolbarRect(null)
-    setPendingRange(null)
     setPendingText('')
-    const editor = editorRef.current
-    const monaco = monacoRef.current
-    const pos = editor?.getPosition()
-    if (editor && monaco && pos) {
-      editor.setSelection(
-        new monaco.Selection(pos.lineNumber, pos.column, pos.lineNumber, pos.column)
-      )
-    }
+    clearSelection()
   }
 
-  const saveAnnotation = useCallback(
-    async (
-      type: 'highlight' | 'underline' | 'note',
-      noteContent?: string,
-      override?: { text?: string; range?: TextRange | null }
-    ): Promise<void> => {
-      const text = override?.text ?? pendingText
-      const range = override?.range !== undefined ? override.range : pendingRange
-      if (!text) return
-      await create({
-        type,
-        color: resolveMarkupColor(type === 'note' ? 'note' : type),
-        selectedText: text,
-        content: noteContent,
-        range: range ?? undefined
+  const exitEditMode = useCallback((): void => {
+    if (dirty) revert()
+    setEditMode(false)
+    closeToolbar()
+  }, [dirty, revert])
+
+  const toggleEditMode = useCallback((): void => {
+    if (editMode) {
+      exitEditMode()
+      return
+    }
+    setEditMode(true)
+  }, [editMode, exitEditMode])
+
+  const handleSave = useCallback(async (): Promise<void> => {
+    const ok = await save()
+    if (ok) setEditMode(false)
+  }, [save])
+
+  const goToChapter = useCallback(
+    (index: number, anchor: ChapterScrollAnchor = 'top'): void => {
+      flushPendingZoom()
+      const next = Math.max(0, Math.min(index, chapters.length - 1))
+      setCurrentChapter(next)
+      if (editMode) {
+        const line = chapters[next]?.startLine ?? 1
+        const editor = editorRef.current
+        editor?.revealLineInCenter(line)
+        editor?.setPosition({ lineNumber: line, column: 1 })
+        editor?.focus()
+        return
+      }
+      requestAnimationFrame(() => {
+        const el = chapterScrollRef.current
+        if (!el) return
+        el.scrollTop = anchor === 'bottom' ? el.scrollHeight : 0
       })
-      closeToolbar()
-      setShowNoteModal(false)
     },
-    [create, pendingText, pendingRange]
+    [chapters, editMode, flushPendingZoom]
   )
 
-  const captureSelection = useCallback((): void => {
-    if (!isActive) return
-    const tool = useWorkspaceStore.getState().annotationTool
-    if (tool === 'pen' || tool === 'rect' || tool === 'eraser') return
-    const editor = editorRef.current
-    const monaco = monacoRef.current
-    if (!editor || !monaco) return
-    const sel = editor.getSelection()
-    const model = editor.getModel()
-    if (!sel || sel.isEmpty() || !model) return
+  useTxtChapterWheelNav({
+    hostRef: chapterScrollRef,
+    enabled: isActive && !editMode && !loading && chapters.length > 1,
+    currentChapter,
+    chapterCount: chapters.length,
+    onChapterChange: goToChapter
+  })
 
-    const text = model.getValueInRange(sel)
-    if (!text.trim()) return
+  const navigateToLine = useCallback(
+    (line: number): void => {
+      goToChapter(chapterIndexForLine(chapters, line))
+    },
+    [chapters, goToChapter]
+  )
 
-    const range: TextRange = {
-      startLine: sel.startLineNumber,
-      startColumn: sel.startColumn,
-      endLine: sel.endLineNumber,
-      endColumn: sel.endColumn
-    }
+  const handleEditorMount = useCallback(
+    (editor: MonacoEditor.IStandaloneCodeEditor, monaco: typeof MonacoApi): void => {
+      defineHanstudyEditorTheme(monaco)
+      editorRef.current = editor
+      sourceSurfaceRef.current = editor.getDomNode()
+      setMonacoMounted(true)
+      closeFindBar()
+      editor.updateOptions({ readOnly: true, fontSize: initialMonacoFontSize })
+    },
+    [closeFindBar, initialMonacoFontSize]
+  )
 
-    if (tool === 'highlight' || tool === 'underline') {
-      if (monacoApplyingRef.current) return
-      monacoApplyingRef.current = true
-      void saveAnnotation(tool, undefined, { text, range }).finally(() => {
-        monacoApplyingRef.current = false
-      })
-      return
-    }
-    if (tool === 'note') {
-      setPendingRange(range)
-      setPendingText(text)
-      setSelection({ docPath: filePath, text, range })
-      setShowNoteModal(true)
-      return
-    }
-
-    setPendingRange(range)
-    setPendingText(text)
-    setSelection({ docPath: filePath, text, range })
-
-    const coords = editor.getScrolledVisiblePosition({
-      lineNumber: sel.startLineNumber,
-      column: sel.startColumn
-    })
-    if (coords) {
-      const editorRect = editor.getDomNode()!.getBoundingClientRect()
-      setToolbarRect(
-        new DOMRect(editorRect.left + coords.left, editorRect.top + coords.top, 100, coords.height)
-      )
-    }
-  }, [filePath, isActive, saveAnnotation, setSelection])
-
-  useEffect(() => {
-    if (!monacoMounted) return
-    if (!isActive) {
-      bindAnnotationSurface(null)
-      return
-    }
-    const scrollEl = editorRef.current
-      ?.getDomNode()
-      ?.querySelector('.monaco-scrollable-element') as HTMLElement | null
-    surfaceRef.current = scrollEl
-    bindAnnotationSurface(scrollEl)
-  }, [monacoMounted, isActive, content, bindAnnotationSurface])
-
-  useEffect(() => {
-    const editor = editorRef.current
-    if (!editor) return
-    const disposable = editor.onMouseUp(() => {
-      if (selectionTimerRef.current != null) clearTimeout(selectionTimerRef.current)
-      selectionTimerRef.current = setTimeout(() => {
-        selectionTimerRef.current = null
-        captureSelection()
-      }, 10)
-    })
-    return () => {
-      disposable.dispose()
-      if (selectionTimerRef.current != null) {
-        clearTimeout(selectionTimerRef.current)
-        selectionTimerRef.current = null
-      }
-    }
-  }, [captureSelection, monacoMounted])
-
-  if (loading) return <div className="loading-state">加载中...</div>
+  if (loading) {
+    return <div className="loading-state">{isLargeFile ? '加载大文件…' : '加载中…'}</div>
+  }
   if (error) return <div className="error-state">{error}</div>
 
-  return (
-    <div className="annotated-viewer">
-      <Editor
-        height="100%"
-        language="plaintext"
-        value={content}
-        theme="vs-light"
-        onMount={(editor, monaco) => {
-          editorRef.current = editor
-          monacoRef.current = monaco
-          setMonacoMounted(true)
-          const scrollEl = editor
-            .getDomNode()
-            ?.querySelector('.monaco-scrollable-element') as HTMLElement | null
-          surfaceRef.current = scrollEl
-          bindAnnotationSurface(scrollEl)
-        }}
-        options={{
-          readOnly: true,
-          minimap: { enabled: true },
-          wordWrap: 'on',
-          fontSize: 14,
-          fontFamily: 'var(--font-mono)',
-          scrollBeyondLastLine: false,
-          renderLineHighlight: 'none',
-          contextmenu: false,
-          automaticLayout: true,
-          mouseWheelZoom: false
-        }}
-      />
+  const toolbar = (
+    <div className="viewer-toolbar text-doc-toolbar">
+      {!editMode && chapters.length > 1 && (
+        <div className="txt-chapter-nav-inline">
+          <IconButton
+            icon={ChevronLeft}
+            label="上一章"
+            disabled={currentChapter <= 0}
+            onClick={() => goToChapter(currentChapter - 1)}
+          />
+          <span className="txt-chapter-indicator">
+            第 {currentChapter + 1} / {chapters.length} 章
+          </span>
+          <IconButton
+            icon={ChevronRight}
+            label="下一章"
+            disabled={currentChapter >= chapters.length - 1}
+            onClick={() => goToChapter(currentChapter + 1)}
+          />
+        </div>
+      )}
+      <div className="txt-zoom-controls">
+        <IconButton icon={ZoomOut} label="缩小" onClick={zoomOut} />
+        <span ref={bindZoomLabelRef} className="txt-zoom-label" />
+        <IconButton icon={ZoomIn} label="放大" onClick={zoomIn} />
+      </div>
+      <span className="viewer-toolbar-hint">
+        {editMode
+          ? '编辑模式 · 修改后点击保存 · Ctrl+滚轮缩放'
+          : chapters.length > 1
+            ? '滑动到底/顶可切换章节 · Ctrl+滚轮缩放 · 只读'
+            : '只读 · Ctrl+滚轮缩放 · 点击「编辑」后可修改'}
+        {isLargeFile ? ' · 大文件已启用懒加载' : ''}
+        {' · 选中文本 Ask AI'}
+      </span>
+    </div>
+  )
 
-      {toolbarRect && annotationTool === 'select' && (
+  const headerActions = (
+    <>
+      <button
+        type="button"
+        className={`text-doc-action-btn${editMode ? ' active' : ''}`}
+        onClick={toggleEditMode}
+        title={editMode ? '退出编辑' : '进入编辑'}
+      >
+        <Pencil size={14} aria-hidden />
+        <span>{editMode ? '退出编辑' : '编辑'}</span>
+      </button>
+      <button
+        type="button"
+        className="text-doc-action-btn primary"
+        disabled={!editMode || !dirty || saving}
+        onClick={() => void handleSave()}
+        title="保存"
+      >
+        <Save size={14} aria-hidden />
+        <span>{saving ? '保存中…' : '保存'}</span>
+      </button>
+    </>
+  )
+
+  return (
+    <div className="text-viewer-root">
+      <TextDocumentShell
+        contentRef={contentRef}
+        outlineItems={outlineItems}
+        currentLine={activeChapter?.startLine ?? 1}
+        currentChapter={currentChapter}
+        onNavigateLine={navigateToLine}
+        onNavigateChapter={goToChapter}
+        onSidePanelHoverStart={flushPendingZoom}
+        showOutlineLineNumbers={false}
+        renderThumbPanel={(open) => (
+          <TextChapterThumbnailPanel
+            chapters={chapters}
+            currentChapter={currentChapter}
+            open={open}
+            onNavigate={goToChapter}
+          />
+        )}
+        toolbar={toolbar}
+        headerActions={headerActions}
+      >
+        {editMode ? (
+          <div ref={bindEditorContainerRef} className="txt-source-editor monaco-editor-host">
+            {monacoHeight > 0 ? (
+              <Editor
+                key={filePath}
+                height={monacoHeight}
+                defaultLanguage="plaintext"
+                value={content}
+                theme={HANSTUDY_EDITOR_THEME}
+                onChange={(value) => {
+                  if (editMode) setContent(value ?? '')
+                }}
+                onMount={handleEditorMount}
+                options={{
+                  ...TXT_SOURCE_EDITOR_OPTIONS,
+                  readOnly: !editMode,
+                  fontSize: initialMonacoFontSize,
+                  largeFileOptimizations: isLargeFile
+                }}
+              />
+            ) : (
+              <div className="loading-state">准备编辑器…</div>
+            )}
+          </div>
+        ) : (
+          <div ref={chapterScrollRef} className="txt-chapter-reader-host">
+            <article ref={readerRef} className="txt-chapter-reader">
+              <header
+                className={`txt-chapter-reader-header${
+                  isChapterTitleLike(activeChapter?.title ?? '') ? ' txt-chapter-reader-header--book' : ''
+                }`}
+              >
+                <h2 className="txt-chapter-reader-title">{activeChapter?.title ?? '全文'}</h2>
+              </header>
+              <div ref={chapterBodyRef} className="txt-chapter-reader-body">
+                {chapterBlocks.map((block, index) => {
+                  if (block.type === 'blank') {
+                    return <div key={`b-${index}`} className="txt-block txt-block--blank" aria-hidden />
+                  }
+                  if (block.type === 'paragraph') {
+                    return (
+                      <p key={`p-${index}`} className="txt-block txt-block--paragraph">
+                        {block.text}
+                      </p>
+                    )
+                  }
+                  return (
+                    <div key={`h-${index}`} className={`txt-block txt-block--${block.type}`}>
+                      {block.text}
+                    </div>
+                  )
+                })}
+              </div>
+            </article>
+          </div>
+        )}
+      </TextDocumentShell>
+
+      {toolbarRect && (
         <SelectionToolbar
           rect={toolbarRect}
-          onHighlight={() => saveAnnotation('highlight')}
-          onUnderline={() => saveAnnotation('underline')}
-          onNote={() => setShowNoteModal(true)}
           onAskAI={() => {
-            sendToAI(pendingText, filePath, pendingRange ?? undefined)
+            sendToAI(pendingText, filePath)
             closeToolbar()
           }}
           onClose={closeToolbar}
-        />
-      )}
-
-      {showNoteModal && (
-        <NoteInputModal
-          onSubmit={(content) => saveAnnotation('note', content)}
-          onCancel={() => setShowNoteModal(false)}
         />
       )}
     </div>

@@ -89,6 +89,42 @@ export function computeZoomFocalScroll(params: {
   }
 }
 
+/** 在 scroll 容器内定位子元素（避免 scrollIntoView 受 transform / 缩放预览干扰） */
+export function scrollContainerToChild(
+  container: HTMLElement,
+  child: HTMLElement,
+  insetTop = 0
+): void {
+  const delta = child.getBoundingClientRect().top - container.getBoundingClientRect().top
+  container.scrollTop = Math.max(0, container.scrollTop + delta - insetTop)
+}
+
+/** 向上查找首个可纵向滚动的祖先 */
+export function findScrollableParent(el: HTMLElement): HTMLElement | null {
+  let node: HTMLElement | null = el.parentElement
+  while (node) {
+    const { overflowY } = getComputedStyle(node)
+    if (
+      (overflowY === 'auto' || overflowY === 'scroll') &&
+      node.scrollHeight > node.clientHeight + 1
+    ) {
+      return node
+    }
+    node = node.parentElement
+  }
+  return null
+}
+
+/** 在可滚动父容器内定位元素；找不到则 fallback 到 scrollIntoView */
+export function scrollElementIntoScrollParent(el: HTMLElement, insetTop = 0): void {
+  const container = findScrollableParent(el)
+  if (container) {
+    scrollContainerToChild(container, el, insetTop)
+    return
+  }
+  el.scrollIntoView({ behavior: 'auto', block: 'nearest' })
+}
+
 export function getPdfOutputScale(): number {
   if (typeof window !== 'undefined' && window.devicePixelRatio) {
     return Math.max(1, window.devicePixelRatio)

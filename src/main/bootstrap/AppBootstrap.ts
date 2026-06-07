@@ -5,6 +5,8 @@ import { registerBuiltinTools } from '../tool/builtins/registerBuiltinTools'
 import { getAppContext } from './AppContext'
 import { createMainWindow } from './createWindow'
 import { registerAllHandlers } from '../ipc/registerAllHandlers'
+import { ensureLocalLibraryDir } from '../infra/localLibraryService'
+import { destroyWebGuest } from '../web/webGuestService'
 
 export async function startApp(): Promise<void> {
   if (process.platform === 'win32') {
@@ -23,8 +25,8 @@ export async function startApp(): Promise<void> {
       console.error('[bootstrap] Java backend failed:', message)
       if (app.isPackaged) {
         dialog.showErrorBox(
-          '标注服务启动失败',
-          `Java 后端未能启动，标注将使用本地备用存储。\n\n${message}`
+          'Java 后端启动失败',
+          `Java 后端未能启动，部分功能将不可用。\n\n${message}`
         )
       }
     }
@@ -38,7 +40,8 @@ export async function startApp(): Promise<void> {
   }
 
   registerBuiltinTools(ctx.toolRegistry)
-  ctx.setWorkspaceRoot(null)
+  const localLibraryRoot = await ensureLocalLibraryDir()
+  ctx.setWorkspaceRoot(localLibraryRoot)
   ctx.initAgentStack()
   await ctx.mcpManager.startAll(ctx.toolRegistry)
 
@@ -53,7 +56,6 @@ export async function shutdownApp(): Promise<void> {
   }
   ctx.activeAiAborts.clear()
   await ctx.mcpManager.shutdown(ctx.toolRegistry)
-  const { destroyWebGuest } = await import('../web/webGuestService')
   destroyWebGuest()
   await stopJavaBackend()
 }
