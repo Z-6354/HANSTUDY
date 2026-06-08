@@ -2,25 +2,29 @@ import {
   ArrowDownWideNarrow,
   Clock,
   ListOrdered,
-  Plus
+  Pencil,
+  Plus,
+  Trash2
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DocumentNoteEntry, NoteSortMode } from '@shared/documentNotes'
-import type { Notebook, NotebookMeta } from '@shared/notebooks'
+import { DEFAULT_NOTEBOOK_ID, type Notebook, type NotebookMeta } from '@shared/notebooks'
 import type { SavedDocumentType } from '@shared/readingProgress'
+import { ConfirmModal, PromptModal } from '../../ui/layout/PromptModal'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
 import type { DocumentType, OpenDocument } from '../../stores/workspaceStore'
 import { captureNoteAnchor } from './captureNoteAnchor'
 import {
   collectDeleteTargets,
   deleteEntry,
-  getChildren,
+  getNotebookChildren,
   insertEntryAsChild,
   migrateDepthToParentId,
-  nextSortIndex,
+  nextSortIndexForParent,
   restoreDeletedEntries
 } from './documentNoteEntries'
 import { resolveNoteSortMode } from './documentNoteSort'
+import { navigateToNoteEntry } from './navigateToNoteEntry'
 import { NoteComposer } from './NoteComposer'
 import { NoteDeleteConfirmModal } from './NoteDeleteConfirmModal'
 import { NoteEntryTree } from './NoteEntryTree'
@@ -64,6 +68,11 @@ export function DocumentNotePanel({ doc }: DocumentNotePanelProps): JSX.Element 
   const [error, setError] = useState<string | null>(null)
   const [inlineInsertAfterId, setInlineInsertAfterId] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null)
+  const [createNotebookOpen, setCreateNotebookOpen] = useState(false)
+  const [createNotebookError, setCreateNotebookError] = useState<string | null>(null)
+  const [renameNotebookOpen, setRenameNotebookOpen] = useState(false)
+  const [renameNotebookError, setRenameNotebookError] = useState<string | null>(null)
+  const [pendingNotebookDelete, setPendingNotebookDelete] = useState<NotebookMeta | null>(null)
   const [undoBundle, setUndoBundle] = useState<DocumentNoteEntry[] | null>(null)
   const listEndRef = useRef<HTMLDivElement>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -77,9 +86,9 @@ export function DocumentNotePanel({ doc }: DocumentNotePanelProps): JSX.Element 
   )
 
   const rootEntries = useMemo(() => {
-    if (!notebook || !doc) return []
-    return getChildren(notebook.entries, doc.path, null, effectiveSortMode)
-  }, [doc, effectiveSortMode, notebook])
+    if (!notebook) return []
+    return getNotebookChildren(notebook.entries, null, effectiveSortMode)
+  }, [effectiveSortMode, notebook])
 
   const applyMigration = useCallback((nb: Notebook): Notebook => {
     if (!doc) return nb
@@ -139,23 +148,45 @@ export function DocumentNotePanel({ doc }: DocumentNotePanelProps): JSX.Element 
     setInlineInsertAfterId(null)
   }, [doc?.path, effectiveSortMode, notebook?.id])
 
+  const flushPendingSave = useCallback(async (): Promise<void> => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+    }
+    const pending = notebookRef.current
+    if (pending) {
+      await window.api.notebooks.save(pending)
+    }
+  }, [])
+
   useEffect(() => {
     if (!doc || !notebook) return
     let cancelled = false
     void (async () => {
+      await flushPendingSave()
+      if (cancelled) return
       let nb = await window.api.notebooks.linkDoc(notebook.id, doc.path)
       if (cancelled) return
-      const imported = await window.api.notebooks.importLegacy(notebook.id, doc.path)
-      if (cancelled) return
-      nb = imported ?? nb
-      setNotebook(applyMigration(nb))
+      if (notebook.id === DEFAULT_NOTEBOOK_ID) {
+        const imported = await window.api.notebooks.importLegacy(notebook.id, doc.path)
+        if (cancelled) return
+        nb = imported ?? nb
+      }
+      setNotebook((prev) => {
+        if (!prev || prev.id !== nb.id) return applyMigration(nb)
+        return applyMigration({
+          ...nb,
+          entries: prev.entries.length > nb.entries.length ? prev.entries : nb.entries,
+          linkedDocPaths: [...new Set([...prev.linkedDocPaths, ...nb.linkedDocPaths])]
+        })
+      })
     })().catch((err: Error) => {
       if (!cancelled) setError(err.message || '关联文档失败')
     })
     return () => {
       cancelled = true
     }
-  }, [applyMigration, doc?.path, notebook?.id])
+  }, [applyMigration, doc?.path, flushPendingSave, notebook?.id])
 
   const scheduleSave = useCallback((next: Notebook): void => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
@@ -199,13 +230,18 @@ export function DocumentNotePanel({ doc }: DocumentNotePanelProps): JSX.Element 
   const createEntry = useCallback(
     async (bodyMarkdown: string): Promise<DocumentNoteEntry> => {
       if (!doc || !notebook) throw new Error('无文档或笔记本')
-      const anchor = await captureNoteAnchor(doc.path, toSavedDocType(doc.type), selection)
+      const anchor = await captureNoteAnchor(
+        doc.path,
+        toSavedDocType(doc.type),
+        doc.name,
+        selection
+      )
       const now = new Date().toISOString()
       return {
         id: newEntryId(),
         bodyMarkdown,
         anchor,
-        sortIndex: nextSortIndex(notebook.entries, doc.path, null),
+        sortIndex: nextSortIndexForParent(notebook.entries, null),
         createdAt: now,
         updatedAt: now,
         collapsed: false
@@ -352,7 +388,6 @@ export function DocumentNotePanel({ doc }: DocumentNotePanelProps): JSX.Element 
   const treeDrag = useNoteTreeDrag(
     effectiveSortMode === 'manual',
     notebook?.entries ?? [],
-    doc?.path ?? '',
     persistEntries
   )
 
@@ -370,34 +405,108 @@ export function DocumentNotePanel({ doc }: DocumentNotePanelProps): JSX.Element 
 
   const handleNavigate = useCallback(
     (entry: DocumentNoteEntry): void => {
-      dispatchReaderNavigate(entry.anchor)
+      void navigateToNoteEntry(entry.anchor, dispatchReaderNavigate).catch((err: Error) => {
+        setError(err.message || '无法跳转到文档')
+      })
     },
     [dispatchReaderNavigate]
   )
 
   const handleNotebookChange = useCallback(
     (id: string): void => {
+      if (id === notebook?.id) return
       setLoading(true)
       setError(null)
-      void loadNotebook(id)
+      void flushPendingSave()
+        .then(() => loadNotebook(id))
         .catch((err: Error) => setError(err.message || '切换笔记本失败'))
         .finally(() => setLoading(false))
     },
-    [loadNotebook]
+    [flushPendingSave, loadNotebook, notebook?.id]
   )
 
-  const handleCreateNotebook = useCallback((): void => {
-    const name = window.prompt('笔记本名称', '新笔记本')
-    if (!name?.trim()) return
-    void window.api.notebooks
-      .create({ name: name.trim(), defaultSortMode: 'manual' })
-      .then(async (created) => {
-        await refreshIndex()
-        setNotebook(created)
-        setActiveNotebookId(created.id)
+  const handleCreateNotebookOpen = useCallback((): void => {
+    setCreateNotebookError(null)
+    setCreateNotebookOpen(true)
+  }, [])
+
+  const handleCreateNotebookSubmit = useCallback(
+    (name: string): void => {
+      const trimmed = name.trim()
+      if (!trimmed) {
+        setCreateNotebookError('笔记本名称不能为空')
+        return
+      }
+      void flushPendingSave()
+        .then(() =>
+          window.api.notebooks.create({ name: trimmed, defaultSortMode: 'manual' })
+        )
+        .then(async (created) => {
+          await refreshIndex()
+          await loadNotebook(created.id)
+          setCreateNotebookOpen(false)
+          setCreateNotebookError(null)
+        })
+        .catch((err: Error) => setCreateNotebookError(err.message || '创建失败'))
+    },
+    [flushPendingSave, loadNotebook, refreshIndex]
+  )
+
+  const handleRenameNotebookOpen = useCallback((): void => {
+    if (!notebook) return
+    setRenameNotebookError(null)
+    setRenameNotebookOpen(true)
+  }, [notebook])
+
+  const handleRenameNotebookSubmit = useCallback(
+    (name: string): void => {
+      if (!notebook) return
+      const trimmed = name.trim()
+      if (!trimmed) {
+        setRenameNotebookError('笔记本名称不能为空')
+        return
+      }
+      void flushPendingSave()
+        .then(() => window.api.notebooks.rename({ id: notebook.id, name: trimmed }))
+        .then(async (updated) => {
+          await refreshIndex()
+          setNotebook((prev) => (prev?.id === updated.id ? applyMigration(updated) : prev))
+          setRenameNotebookOpen(false)
+          setRenameNotebookError(null)
+        })
+        .catch((err: Error) => setRenameNotebookError(err.message || '重命名失败'))
+    },
+    [applyMigration, flushPendingSave, notebook, refreshIndex]
+  )
+
+  const handleDeleteNotebookRequest = useCallback((): void => {
+    if (!notebook || notebook.id === DEFAULT_NOTEBOOK_ID) return
+    const meta = notebookMetas.find((m) => m.id === notebook.id)
+    if (!meta) return
+    setPendingNotebookDelete(meta)
+  }, [notebook, notebookMetas])
+
+  const handleConfirmDeleteNotebook = useCallback((): void => {
+    const target = pendingNotebookDelete
+    if (!target) return
+    void flushPendingSave()
+      .then(() => window.api.notebooks.delete(target.id))
+      .then(async () => {
+        const metas = await refreshIndex()
+        setPendingNotebookDelete(null)
+        const fallbackId =
+          metas.find((m) => m.id === DEFAULT_NOTEBOOK_ID)?.id ?? metas[0]?.id ?? null
+        if (!fallbackId) {
+          setNotebook(null)
+          return
+        }
+        await loadNotebook(fallbackId)
       })
-      .catch((err: Error) => setError(err.message || '创建失败'))
-  }, [refreshIndex, setActiveNotebookId])
+      .catch((err: Error) => {
+        setPendingNotebookDelete(null)
+        setError(err.message || '删除笔记本失败')
+      })
+  }, [flushPendingSave, loadNotebook, pendingNotebookDelete, refreshIndex])
 
   const handleSetDefaultSort = useCallback(
     (mode: NoteSortMode): void => {
@@ -407,15 +516,6 @@ export function DocumentNotePanel({ doc }: DocumentNotePanelProps): JSX.Element 
     },
     [notebook, persistNotebook, setNoteSortMode]
   )
-
-  if (!doc) {
-    return (
-      <div className="doc-note-panel-empty">
-        <p>请先打开一份文档</p>
-        <p className="doc-note-panel-hint">笔记保存在笔记本中，按当前文档筛选显示</p>
-      </div>
-    )
-  }
 
   if (loading && !notebook) return <div className="loading-state">加载笔记...</div>
   if (error && !notebook) return <div className="error-state">{error}</div>
@@ -441,14 +541,41 @@ export function DocumentNotePanel({ doc }: DocumentNotePanelProps): JSX.Element 
             className="doc-note-notebook-add"
             title="新建笔记本"
             aria-label="新建笔记本"
-            onClick={handleCreateNotebook}
+            onClick={handleCreateNotebookOpen}
           >
             <Plus size={14} />
           </button>
+          <button
+            type="button"
+            className="doc-note-notebook-rename"
+            title="重命名当前笔记本"
+            aria-label="重命名当前笔记本"
+            disabled={!notebook}
+            onClick={handleRenameNotebookOpen}
+          >
+            <Pencil size={14} />
+          </button>
+          <button
+            type="button"
+            className="doc-note-notebook-delete"
+            title={
+              notebook?.id === DEFAULT_NOTEBOOK_ID
+                ? '默认笔记本不可删除'
+                : '删除当前笔记本'
+            }
+            aria-label="删除当前笔记本"
+            disabled={!notebook || notebook.id === DEFAULT_NOTEBOOK_ID}
+            onClick={handleDeleteNotebookRequest}
+          >
+            <Trash2 size={14} />
+          </button>
         </div>
         <div className="doc-note-panel-title-row">
-          <div className="doc-note-panel-title" title={doc.path}>
-            {doc.name}
+          <div
+            className="doc-note-panel-title"
+            title={doc ? doc.path : '打开文档后可在此笔记本下新建笔记'}
+          >
+            {doc ? `新建笔记关联：${doc.name}` : '查看笔记本全部笔记'}
           </div>
           <div className="doc-note-panel-sort" role="group" aria-label="排序方式">
             <SortButton
@@ -482,19 +609,32 @@ export function DocumentNotePanel({ doc }: DocumentNotePanelProps): JSX.Element 
       {error && <div className="doc-note-panel-error">{error}</div>}
 
       {effectiveSortMode !== 'manual' && rootEntries.length > 0 && (
-        <p className="doc-note-panel-hint">切换到「默认」排序后可按住拖动调整顺序</p>
+        <div className="doc-note-panel-sort-hint" role="status">
+          <ListOrdered size={13} aria-hidden className="doc-note-panel-sort-hint-icon" />
+          <span className="doc-note-panel-sort-hint-text">拖动排序需使用「默认」视图</span>
+          <button
+            type="button"
+            className="doc-note-panel-sort-hint-action"
+            onClick={() => setNoteSortMode('manual')}
+          >
+            切换
+          </button>
+        </div>
       )}
 
       <div className="doc-note-panel-list">
         {rootEntries.length === 0 ? (
           <div className="doc-note-panel-placeholder">
             <p>暂无笔记</p>
-            <p>在下方输入内容；默认排序下按住笔记拖动，可嵌套或调整顺序</p>
+            <p>
+              {doc
+                ? '在下方输入内容；点击文档名或位置可跳转到对应页'
+                : '打开文档后可新建笔记；已有笔记可点击跳转到对应文档'}
+            </p>
           </div>
         ) : (
           <NoteEntryTree
             entries={notebook?.entries ?? []}
-            docPath={doc.path}
             parentId={null}
             sortMode={effectiveSortMode}
             draggable={effectiveSortMode === 'manual'}
@@ -521,13 +661,56 @@ export function DocumentNotePanel({ doc }: DocumentNotePanelProps): JSX.Element 
         />
       )}
 
-      <NoteComposer disabled={!notebook} onSubmit={(md) => void handleAdd(md)} />
+      <NoteComposer
+        disabled={!notebook || !doc}
+        placeholder={doc ? undefined : '请先打开参考文档以新建笔记'}
+        onSubmit={(md) => void handleAdd(md)}
+      />
 
       {pendingDelete && (
         <NoteDeleteConfirmModal
           childCount={pendingDelete.childCount}
           onConfirm={handleConfirmDelete}
           onCancel={() => setPendingDelete(null)}
+        />
+      )}
+
+      {createNotebookOpen && (
+        <PromptModal
+          title="新建笔记本"
+          label="名称"
+          defaultValue="新笔记本"
+          placeholder="输入笔记本名称"
+          error={createNotebookError ?? undefined}
+          onSubmit={handleCreateNotebookSubmit}
+          onCancel={() => {
+            setCreateNotebookOpen(false)
+            setCreateNotebookError(null)
+          }}
+        />
+      )}
+
+      {renameNotebookOpen && notebook && (
+        <PromptModal
+          title="重命名笔记本"
+          label="名称"
+          defaultValue={notebook.name}
+          placeholder="输入笔记本名称"
+          error={renameNotebookError ?? undefined}
+          onSubmit={handleRenameNotebookSubmit}
+          onCancel={() => {
+            setRenameNotebookOpen(false)
+            setRenameNotebookError(null)
+          }}
+        />
+      )}
+
+      {pendingNotebookDelete && (
+        <ConfirmModal
+          title="删除笔记本"
+          message={`确定删除「${pendingNotebookDelete.name}」？其中的全部笔记条目将被永久删除，且无法撤销。`}
+          onConfirm={handleConfirmDeleteNotebook}
+          onCancel={() => setPendingNotebookDelete(null)}
         />
       )}
     </div>

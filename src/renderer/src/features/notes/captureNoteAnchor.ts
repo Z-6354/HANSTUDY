@@ -5,6 +5,7 @@ import type { TextSelectionContext } from '@shared/types'
 export async function captureNoteAnchor(
   docPath: string,
   docType: SavedDocumentType,
+  docName: string,
   selection: TextSelectionContext | null
 ): Promise<DocumentNoteAnchor> {
   const progress = await window.api.readingProgress.get(docPath)
@@ -16,6 +17,7 @@ export async function captureNoteAnchor(
   return {
     docPath,
     docType,
+    docName,
     pdfPage: progress?.pdfPage,
     pdfScrollRatio: progress?.pdfScrollRatio,
     scrollTop: progress?.scrollTop,

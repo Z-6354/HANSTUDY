@@ -17,7 +17,7 @@ import {
 } from 'react'
 import type { DocumentNoteEntry } from '@shared/documentNotes'
 import { IconButton } from '../../components/IconButton'
-import { formatNoteAnchorLabel } from './documentNoteSort'
+import { formatNoteAnchorLabel, formatNoteDocLabel } from './documentNoteSort'
 import { renderNoteMarkdownHtml } from './noteMarkdown'
 
 export type NoteDropIntent = 'nest' | 'before' | 'after'
@@ -42,9 +42,13 @@ function isDragExcludedTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return true
   return Boolean(
     target.closest(
-      'button, textarea, input, a, [contenteditable], .doc-note-composer, .doc-note-entry-textarea'
+      'button, textarea, input, a, [contenteditable], .doc-note-composer, .doc-note-entry-textarea, .doc-note-entry-drag-pad'
     )
   )
+}
+
+function isHeaderToggleExcluded(target: EventTarget | null): boolean {
+  return isDragExcludedTarget(target)
 }
 
 export function NoteEntryCard({
@@ -65,7 +69,6 @@ export function NoteEntryCard({
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(entry.bodyMarkdown)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
-  const [pressPending, setPressPending] = useState(false)
   const collapsed = forceExpanded ? false : (entry.collapsed ?? false)
 
   const previewHtml = useMemo(
@@ -94,15 +97,16 @@ export function NoteEntryCard({
     }
   }, [contextMenu])
 
-  useEffect(() => {
-    if (!dragging) setPressPending(false)
-  }, [dragging])
-
   const handleDragPointerDown = (e: ReactPointerEvent<HTMLElement>): void => {
     if (!draggable || editing || e.button !== 0) return
     if (isDragExcludedTarget(e.target)) return
-    setPressPending(true)
     onDragPointerDown?.(entry.id, e)
+  }
+
+  const handleHeaderClick = (e: MouseEvent<HTMLElement>): void => {
+    if (editing || forceExpanded) return
+    if (isHeaderToggleExcluded(e.target)) return
+    onToggleCollapse(entry.id)
   }
 
   const handleContextMenu = (e: MouseEvent): void => {
@@ -116,12 +120,12 @@ export function NoteEntryCard({
     <>
       <article
         data-note-entry-id={entry.id}
-        className={`doc-note-entry${collapsed ? ' doc-note-entry--collapsed' : ''}${draggable ? ' doc-note-entry--manual-drag' : ''}${pressPending || dragging ? ' doc-note-entry--drag-ready' : ''}${dragging ? ' doc-note-entry--dragging' : ''}${dropIntent ? ` doc-note-entry--drop-${dropIntent}` : ''}`}
+        className={`doc-note-entry${collapsed ? ' doc-note-entry--collapsed' : ''}${draggable ? ' doc-note-entry--manual-drag' : ''}${dragging ? ' doc-note-entry--dragging' : ''}${dropIntent ? ` doc-note-entry--drop-${dropIntent}` : ''}`}
         title={draggable ? '按住拖动以调整位置或层级' : undefined}
         onPointerDown={handleDragPointerDown}
         onContextMenu={handleContextMenu}
       >
-        <header className="doc-note-entry-header">
+        <header className="doc-note-entry-header" onClick={handleHeaderClick}>
           <button
             type="button"
             className="doc-note-entry-collapse"
@@ -132,8 +136,16 @@ export function NoteEntryCard({
           </button>
           <button
             type="button"
+            className="doc-note-entry-doc"
+            title={entry.anchor.docPath}
+            onClick={() => onNavigate(entry)}
+          >
+            {formatNoteDocLabel(entry)}
+          </button>
+          <button
+            type="button"
             className="doc-note-entry-anchor"
-            title="跳转到对应位置"
+            title="跳转到对应文档位置"
             onClick={() => onNavigate(entry)}
           >
             <MapPin size={12} />

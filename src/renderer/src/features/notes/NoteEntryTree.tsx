@@ -1,5 +1,5 @@
 import type { DocumentNoteEntry, NoteSortMode } from '@shared/documentNotes'
-import { getChildren } from './documentNoteTree'
+import { getNotebookChildren } from './documentNoteTree'
 import { NoteComposer } from './NoteComposer'
 import { NoteEntryCard } from './NoteEntryCard'
 import type { useNoteTreeDrag } from './useNoteTreeDrag'
@@ -8,7 +8,6 @@ type NoteTreeDrag = ReturnType<typeof useNoteTreeDrag>
 
 interface NoteEntryTreeProps {
   entries: DocumentNoteEntry[]
-  docPath: string
   parentId: string | null
   sortMode: NoteSortMode
   draggable: boolean
@@ -26,7 +25,6 @@ interface NoteEntryTreeProps {
 
 export function NoteEntryTree({
   entries,
-  docPath,
   parentId,
   sortMode,
   draggable,
@@ -41,12 +39,12 @@ export function NoteEntryTree({
   onInsertSubmit,
   onInsertCancel
 }: NoteEntryTreeProps): JSX.Element {
-  const siblings = getChildren(entries, docPath, parentId, sortMode)
+  const siblings = getNotebookChildren(entries, parentId, sortMode)
 
   return (
     <>
       {siblings.map((entry) => {
-        const childEntries = getChildren(entries, docPath, entry.id, sortMode)
+        const childEntries = getNotebookChildren(entries, entry.id, sortMode)
         const hasChildren = childEntries.length > 0
         const insertChildOpen = inlineInsertAfterId === entry.id
         const collapsed = entry.collapsed ?? false
@@ -76,7 +74,6 @@ export function NoteEntryTree({
                 {hasChildren && (
                   <NoteEntryTree
                     entries={entries}
-                    docPath={docPath}
                     parentId={entry.id}
                     sortMode={sortMode}
                     draggable={draggable}

@@ -129,6 +129,10 @@ const api = {
       input: import('../shared/notebooks').CreateNotebookInput
     ): Promise<import('../shared/notebooks').Notebook> =>
       ipcRenderer.invoke(IPC.notebooks.create, input),
+    rename: (
+      input: import('../shared/notebooks').RenameNotebookInput
+    ): Promise<import('../shared/notebooks').Notebook> =>
+      ipcRenderer.invoke(IPC.notebooks.rename, input),
     delete: (id: string): Promise<boolean> => ipcRenderer.invoke(IPC.notebooks.delete, id),
     linkDoc: (
       notebookId: string,

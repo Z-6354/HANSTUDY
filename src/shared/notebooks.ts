@@ -2,6 +2,9 @@ import type { NoteSortMode } from './documentNotes'
 
 export type { DocumentNoteAnchor, DocumentNoteEntry, NoteSortMode } from './documentNotes'
 
+/** 系统默认笔记本，不可删除 */
+export const DEFAULT_NOTEBOOK_ID = 'notebook-default'
+
 /** 笔记本元数据（索引项，不含条目） */
 export interface NotebookMeta {
   id: string
@@ -18,7 +21,7 @@ export interface Notebook {
   createdAt: string
   updatedAt: string
   defaultSortMode: NoteSortMode
-  /** 曾在此笔记本下工作过的文档路径（笔记本 → 文档，单向关联） */
+  /** 曾在此笔记本下记过笔记的文档路径（多对多关联索引） */
   linkedDocPaths: string[]
   entries: import('./documentNotes').DocumentNoteEntry[]
 }
@@ -32,4 +35,9 @@ export interface NotebooksIndex {
 export interface CreateNotebookInput {
   name: string
   defaultSortMode?: NoteSortMode
+}
+
+export interface RenameNotebookInput {
+  id: string
+  name: string
 }

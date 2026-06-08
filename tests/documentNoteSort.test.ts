@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { DocumentNoteEntry } from '../src/shared/documentNotes'
 import {
   formatNoteAnchorLabel,
+  formatNoteDocLabel,
   sortDocumentNoteEntries
 } from '../src/renderer/src/features/notes/documentNoteSort'
 
@@ -51,6 +52,20 @@ describe('sortDocumentNoteEntries', () => {
     ]
     const sorted = sortDocumentNoteEntries(items, 'document')
     expect(sorted.map((e) => e.id)).toEqual(['p1', 'p3'])
+  })
+})
+
+describe('formatNoteDocLabel', () => {
+  it('prefers stored docName', () => {
+    expect(
+      formatNoteDocLabel(entry('x', '2026', { docPath: '/a/b.pdf', docName: '高等数学' }))
+    ).toBe('高等数学')
+  })
+
+  it('falls back to basename', () => {
+    expect(formatNoteDocLabel(entry('x', '2026', { docPath: 'D:/books/chapter-1.pdf' }))).toBe(
+      'chapter-1.pdf'
+    )
   })
 })
 

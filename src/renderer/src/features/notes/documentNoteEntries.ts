@@ -4,6 +4,7 @@ export {
   deleteEntryCascade as deleteEntry,
   entriesForDoc,
   getChildren,
+  getNotebookChildren,
   getParentId,
   entryDepth,
   insertEntryAfter,
@@ -14,6 +15,7 @@ export {
   nestEntryUnder,
   nestUnderPreviousSibling,
   nextSortIndex,
+  nextSortIndexForParent,
   promoteEntry as outdentEntry,
   restoreDeletedEntries,
   nestUnderPreviousSibling as indentEntry

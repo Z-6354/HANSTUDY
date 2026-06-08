@@ -4616,6 +4616,58 @@ u.annotation-underline {
   opacity: 0.85;
 }
 
+.doc-note-panel-sort-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 12px 8px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--accent) 5%, var(--bg-secondary));
+  border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--border));
+  flex-shrink: 0;
+}
+
+.doc-note-panel-sort-hint-icon {
+  flex-shrink: 0;
+  color: var(--accent);
+  opacity: 0.85;
+}
+
+.doc-note-panel-sort-hint-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.doc-note-panel-sort-hint-action {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.doc-note-panel-sort-hint-action:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: var(--accent);
+}
+
+.doc-note-panel-sort-hint-action:focus {
+  outline: none;
+}
+
+.doc-note-panel-sort-hint-action:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 1px;
+}
+
 .doc-note-panel-header {
   display: flex;
   flex-direction: column;
@@ -4659,6 +4711,52 @@ u.annotation-underline {
 .doc-note-notebook-add:hover {
   color: var(--accent);
   border-color: var(--accent);
+}
+
+.doc-note-notebook-rename {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.doc-note-notebook-rename:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.doc-note-notebook-rename:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.doc-note-notebook-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.doc-note-notebook-delete:hover:not(:disabled) {
+  color: #e53935;
+  border-color: color-mix(in srgb, #e53935 45%, var(--border));
+}
+
+.doc-note-notebook-delete:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .doc-note-panel-error {
@@ -4745,6 +4843,12 @@ u.annotation-underline {
   border-bottom: 1px solid var(--border);
   font-size: 11px;
   flex-wrap: wrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.doc-note-entry--collapsed .doc-note-entry-header {
+  border-bottom: none;
 }
 
 .doc-note-entry-drag-pad {
@@ -4772,19 +4876,13 @@ u.annotation-underline {
   user-select: text;
 }
 
-.doc-note-entry--drag-ready {
-  cursor: grabbing;
-  touch-action: none;
-  box-shadow: 0 2px 14px color-mix(in srgb, var(--accent) 18%, transparent);
-  outline: 2px solid color-mix(in srgb, var(--accent) 35%, transparent);
-  outline-offset: 1px;
-  transform: scale(1.005);
-  transition: box-shadow 0.12s ease, outline-color 0.12s ease, transform 0.12s ease;
-}
-
 .doc-note-entry--dragging {
   opacity: 0.55;
   pointer-events: none;
+  cursor: grabbing;
+  touch-action: none;
+  box-shadow: 0 2px 14px color-mix(in srgb, var(--accent) 18%, transparent);
+  transform: scale(1.005);
 }
 
 .doc-note-entry--dragging * {
@@ -4983,6 +5081,31 @@ u.annotation-underline {
   cursor: pointer;
 }
 
+.doc-note-entry-collapse:focus {
+  outline: none;
+}
+
+.doc-note-entry-doc {
+  display: inline-flex;
+  align-items: center;
+  max-width: 120px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: none;
+  background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-note-entry-doc:hover {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
 .doc-note-entry-anchor {
   display: inline-flex;
   align-items: center;
@@ -5035,8 +5158,18 @@ u.annotation-underline {
 }
 
 .doc-note-entry-preview mark {
-  border-radius: 2px;
-  padding: 0 1px;
+  border-radius: 3px;
+  padding: 1px 4px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.doc-note-entry-preview mark:not([style*='color']) {
+  color: #212121;
+}
+
+.doc-note-entry-preview span[style*='color'] {
+  font-weight: 500;
 }
 
 .doc-note-entry-textarea {
@@ -5112,9 +5245,9 @@ u.annotation-underline {
 .doc-note-highlight-btn {
   width: 24px;
   height: 24px;
-  border: none;
+  border: 1px solid color-mix(in srgb, #f9a825 40%, var(--border));
   border-radius: 4px;
-  background: #fff59d;
+  background: linear-gradient(135deg, #fff176 0%, #ffee58 100%);
   color: #5d4037;
   font-size: 11px;
   font-weight: 700;
@@ -5148,11 +5281,30 @@ u.annotation-underline {
 }
 
 .doc-note-color-swatch {
-  display: block;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  border: 1px solid color-mix(in srgb, var(--text-muted) 30%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 25%, transparent);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.doc-note-color-swatch--text {
+  background: var(--bg-primary);
+}
+
+.doc-note-color-swatch--highlight {
+  border-color: color-mix(in srgb, currentColor 20%, var(--border));
+}
+
+.doc-note-color-swatch--default {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border-style: dashed;
 }
 
 .doc-note-color-default {
@@ -5295,8 +5447,18 @@ u.annotation-underline {
 }
 
 .doc-note-composer-visual mark {
-  border-radius: 2px;
-  padding: 0 1px;
+  border-radius: 3px;
+  padding: 1px 4px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.doc-note-composer-visual mark:not([style*='color']) {
+  color: #212121;
+}
+
+.doc-note-composer-visual span[style*='color'] {
+  font-weight: 500;
 }
 
 .doc-note-composer-caret-anchor {

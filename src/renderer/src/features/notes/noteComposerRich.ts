@@ -1,4 +1,5 @@
 import { EDITABLE_BLOCK_PAD, slashCommandToVisualHtml } from './noteComposerContent'
+import { noteHighlightStyle } from './noteComposerFormat'
 import { placeCaretInSlashBlock } from './noteComposerSlashBlock'
 import {
   isInlineSlashKind,
@@ -193,7 +194,7 @@ export function applyTextColor(color: string): void {
 }
 
 export function applyHighlight(color: string): void {
-  wrapSelectionHtml(`<mark style="background-color: ${color}">`, '</mark>')
+  wrapSelectionHtml(`<mark style="${noteHighlightStyle(color)}">`, '</mark>')
 }
 
 export function applyFontSize(size: string): void {

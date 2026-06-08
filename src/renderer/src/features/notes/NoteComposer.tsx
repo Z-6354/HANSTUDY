@@ -6,6 +6,7 @@ import {
   NOTE_FONT_SIZES,
   NOTE_HIGHLIGHT_COLORS,
   NOTE_TEXT_COLORS,
+  contrastTextForBackground,
   wrapNoteFontSize,
   wrapNoteHighlight,
   wrapNoteTextColor
@@ -632,9 +633,14 @@ export function NoteComposer({
                   }}
                 >
                   {opt.value ? (
-                    <span className="doc-note-color-swatch" style={{ backgroundColor: opt.value }} />
+                    <span
+                      className="doc-note-color-swatch doc-note-color-swatch--text"
+                      style={{ color: opt.value }}
+                    >
+                      A
+                    </span>
                   ) : (
-                    <span className="doc-note-color-default">A</span>
+                    <span className="doc-note-color-swatch doc-note-color-swatch--default">A</span>
                   )}
                 </button>
               ))}
@@ -667,7 +673,15 @@ export function NoteComposer({
                     handleHighlightColor(opt.value)
                   }}
                 >
-                  <span className="doc-note-color-swatch" style={{ backgroundColor: opt.value }} />
+                  <span
+                    className="doc-note-color-swatch doc-note-color-swatch--highlight"
+                    style={{
+                      backgroundColor: opt.value,
+                      color: contrastTextForBackground(opt.value)
+                    }}
+                  >
+                    A
+                  </span>
                 </button>
               ))}
             </div>

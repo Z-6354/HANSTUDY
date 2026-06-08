@@ -4,6 +4,8 @@ import type { SavedDocumentType } from './readingProgress'
 export interface DocumentNoteAnchor {
   docPath: string
   docType: SavedDocumentType
+  /** 文档显示名（用于跨文档笔记列表） */
+  docName?: string
   /** PDF 页码（1-based） */
   pdfPage?: number
   pdfScrollRatio?: number

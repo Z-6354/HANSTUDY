@@ -1,6 +1,17 @@
 import type { DocumentNoteEntry, NoteSortMode } from '@shared/documentNotes'
 
-function anchorSortKey(entry: DocumentNoteEntry): number {
+export function noteDocBasename(docPath: string): string {
+  const normalized = docPath.replace(/\\/g, '/')
+  const slash = normalized.lastIndexOf('/')
+  if (slash >= 0) return normalized.slice(slash + 1) || docPath
+  return docPath
+}
+
+export function formatNoteDocLabel(entry: DocumentNoteEntry): string {
+  return entry.anchor.docName?.trim() || noteDocBasename(entry.anchor.docPath)
+}
+
+export function anchorSortKey(entry: DocumentNoteEntry): number {
   const a = entry.anchor
   if (a.pdfPage != null && a.pdfPage > 0) {
     return a.pdfPage * 1_000_000 + Math.round((a.pdfScrollRatio ?? 0) * 1000)

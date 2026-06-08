@@ -1,20 +1,22 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { app } from 'electron'
 import type { DocumentNoteEntry } from '../../shared/documentNotes'
 import type { DocumentNoteThread } from '../../shared/documentNotes'
-import type {
-  CreateNotebookInput,
-  Notebook,
-  NotebookMeta,
-  NotebooksIndex
+import { uniqueNotebookName } from '../../shared/notebookNames'
+import {
+  DEFAULT_NOTEBOOK_ID,
+  type CreateNotebookInput,
+  type Notebook,
+  type NotebookMeta,
+  type NotebooksIndex,
+  type RenameNotebookInput
 } from '../../shared/notebooks'
 import { documentNotesRoot, ensureDocumentNotesRoot, getDocumentNotes } from './documentNotesStore'
 
 const DIR_NAME = 'notebooks'
 const INDEX_FILE = 'index.json'
-const DEFAULT_NOTEBOOK_ID = 'notebook-default'
 
 export function notebooksRoot(): string {
   return join(app.getPath('userData'), DIR_NAME)
@@ -83,20 +85,54 @@ async function writeIndex(index: NotebooksIndex): Promise<void> {
   await writeFile(path, JSON.stringify(index, null, 2), 'utf-8')
 }
 
+async function recoverNotebookFromIndex(id: string): Promise<Notebook | null> {
+  const index = await readIndex()
+  const meta = index?.notebooks.find((n) => n.id === id)
+  if (!meta) return null
+  const recovered: Notebook = {
+    id: meta.id,
+    name: meta.name,
+    createdAt: meta.createdAt,
+    updatedAt: meta.updatedAt,
+    defaultSortMode: meta.defaultSortMode,
+    linkedDocPaths: [],
+    entries: []
+  }
+  await writeNotebookFile(recovered)
+  return recovered
+}
+
 async function readNotebookFile(id: string): Promise<Notebook | null> {
   assertNotebookId(id)
   const path = notebookPath(id)
   assertUnderRoot(path)
   try {
     const raw = await readFile(path, 'utf-8')
+    if (!raw.trim()) return recoverNotebookFromIndex(id)
     return JSON.parse(raw) as Notebook
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
+    if (err instanceof SyntaxError) return recoverNotebookFromIndex(id)
     throw err
   }
 }
 
 async function writeNotebookFile(notebook: Notebook): Promise<void> {
+  await enqueueNotebookWrite(notebook.id, () => writeNotebookFileInner(notebook))
+}
+
+const notebookWriteTail = new Map<string, Promise<void>>()
+
+function enqueueNotebookWrite(id: string, task: () => Promise<void>): Promise<void> {
+  const prev = notebookWriteTail.get(id) ?? Promise.resolve()
+  const next = prev.catch(() => undefined).then(task)
+  notebookWriteTail.set(id, next)
+  return next.finally(() => {
+    if (notebookWriteTail.get(id) === next) notebookWriteTail.delete(id)
+  })
+}
+
+async function writeNotebookFileInner(notebook: Notebook): Promise<void> {
   await ensureNotebooksRoot()
   const path = notebookPath(notebook.id)
   assertUnderRoot(path)
@@ -104,7 +140,27 @@ async function writeNotebookFile(notebook: Notebook): Promise<void> {
     ...notebook,
     updatedAt: new Date().toISOString()
   }
-  await writeFile(path, JSON.stringify(next, null, 2), 'utf-8')
+  const content = JSON.stringify(next, null, 2)
+  const tmp = `${path}.${randomUUID()}.tmp`
+  assertUnderRoot(tmp)
+  await writeFile(tmp, content, 'utf-8')
+  try {
+    await rename(tmp, path)
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code
+    if (code === 'ENOENT') {
+      await writeFile(path, content, 'utf-8')
+      return
+    }
+    if (code === 'EEXIST' || code === 'EPERM') {
+      await unlink(path).catch(() => undefined)
+      await rename(tmp, path)
+      return
+    }
+    throw err
+  } finally {
+    await unlink(tmp).catch(() => undefined)
+  }
 }
 
 async function migrateLegacyDocumentNotes(): Promise<NotebooksIndex> {
@@ -153,6 +209,14 @@ async function migrateLegacyDocumentNotes(): Promise<NotebooksIndex> {
     updatedAt: now
   }
   await writeIndex(index)
+  for (const file of files) {
+    if (!file.endsWith('.json')) continue
+    try {
+      await unlink(join(root, file))
+    } catch {
+      // ignore cleanup failures
+    }
+  }
   return index
 }
 
@@ -188,7 +252,9 @@ export async function saveNotebook(notebook: Notebook): Promise<void> {
 
 export async function createNotebook(input: CreateNotebookInput): Promise<Notebook> {
   await ensureIndex()
-  const name = input.name.trim()
+  const index = await readIndex()
+  const existingNames = index?.notebooks.map((n) => n.name) ?? []
+  const name = uniqueNotebookName(input.name, existingNames)
   if (!name) throw new Error('笔记本名称不能为空')
   const now = new Date().toISOString()
   const id = `notebook-${randomUUID().slice(0, 8)}`
@@ -203,6 +269,25 @@ export async function createNotebook(input: CreateNotebookInput): Promise<Notebo
   }
   await saveNotebook(notebook)
   return notebook
+}
+
+export async function renameNotebook(input: RenameNotebookInput): Promise<Notebook> {
+  await ensureIndex()
+  const trimmed = input.name.trim()
+  if (!trimmed) throw new Error('笔记本名称不能为空')
+  const notebook = await readNotebookFile(input.id)
+  if (!notebook) throw new Error('笔记本不存在')
+  const index = await readIndex()
+  const existingNames =
+    index?.notebooks.filter((n) => n.id !== input.id).map((n) => n.name) ?? []
+  const name = uniqueNotebookName(trimmed, existingNames)
+  const updated: Notebook = {
+    ...notebook,
+    name,
+    updatedAt: new Date().toISOString()
+  }
+  await saveNotebook(updated)
+  return updated
 }
 
 export async function deleteNotebook(id: string): Promise<void> {
@@ -241,11 +326,14 @@ export async function linkDocumentToNotebook(
   return next
 }
 
-/** 按需从旧 per-doc 存储补全条目（首次打开某文档时） */
+/** 按需从旧 per-doc 存储补全条目（仅默认笔记本、首次打开某文档时） */
 export async function importLegacyThreadIfNeeded(
   notebookId: string,
   docPath: string
 ): Promise<Notebook | null> {
+  if (notebookId !== DEFAULT_NOTEBOOK_ID) {
+    return getNotebook(notebookId)
+  }
   const notebook = await getNotebook(notebookId)
   if (!notebook) return null
   const hasEntries = notebook.entries.some((e) => e.anchor.docPath === docPath)
@@ -278,4 +366,3 @@ export async function ensureDefaultNotebook(): Promise<Notebook> {
   return createNotebook({ name: '默认笔记本', defaultSortMode: 'manual' })
 }
 
-export { DEFAULT_NOTEBOOK_ID }

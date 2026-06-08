@@ -60,7 +60,7 @@ export function EditorArea(): JSX.Element {
           <p>打开文档阅读，或在侧栏「笔记」中记笔记</p>
           <p className="empty-state-hint">
             {workbenchMode === 'compose'
-              ? '笔记模式：左侧阅读文档，右侧按当前文档记录笔记线程'
+              ? '笔记模式：左侧阅读文档，右侧笔记本可汇集多份文档的笔记'
               : '浏览模式：全屏阅读文档；切换到笔记模式可边读边记'}
           </p>
           <div className="actions actions-icon-row">

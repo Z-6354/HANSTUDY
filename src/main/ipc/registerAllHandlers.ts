@@ -30,6 +30,7 @@ import {
   importLegacyThreadIfNeeded,
   linkDocumentToNotebook,
   listNotebooks,
+  renameNotebook,
   saveNotebook
 } from '../infra/notebooksStore'
 import { getAppSettings, saveAppSettings } from '../config/appSettingsService'
@@ -305,6 +306,9 @@ export function registerAllHandlers(): void {
   })
   ipcRegistry.register(IPC.notebooks.create, async (input: unknown) =>
     createNotebook(input as import('../../shared/notebooks').CreateNotebookInput)
+  )
+  ipcRegistry.register(IPC.notebooks.rename, async (input: unknown) =>
+    renameNotebook(input as import('../../shared/notebooks').RenameNotebookInput)
   )
   ipcRegistry.register(IPC.notebooks.delete, async (id: unknown) => {
     await deleteNotebook(String(id))

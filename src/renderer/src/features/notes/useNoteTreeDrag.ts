@@ -130,7 +130,6 @@ function resolveDropTarget(
 export function useNoteTreeDrag(
   enabled: boolean,
   entries: DocumentNoteEntry[],
-  docPath: string,
   onPersist: (nextEntries: DocumentNoteEntry[]) => void
 ) {
   const [draggingId, setDraggingId] = useState<string | null>(null)
@@ -222,7 +221,6 @@ export function useNoteTreeDrag(
           if (target && target.id !== session.entryId) {
             const next = applyNoteTreeDrop(
               entriesRef.current,
-              docPath,
               session.entryId,
               target.id,
               target.intent
@@ -247,7 +245,7 @@ export function useNoteTreeDrag(
       window.addEventListener('pointerup', onUp)
       window.addEventListener('pointercancel', onUp)
     },
-    [docPath, enabled, onPersist, reset]
+    [enabled, onPersist, reset]
   )
 
   useEffect(() => {

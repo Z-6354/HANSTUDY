@@ -63,6 +63,7 @@ export const IPC = {
     get: 'notebooks:get',
     save: 'notebooks:save',
     create: 'notebooks:create',
+    rename: 'notebooks:rename',
     delete: 'notebooks:delete',
     linkDoc: 'notebooks:linkDoc',
     importLegacy: 'notebooks:importLegacy'
