@@ -1,131 +1,132 @@
 import { EDITABLE_BLOCK_PAD, slashCommandToVisualHtml } from './noteComposerContent'
-import type { NoteSlashCommand } from './noteSlashCommands'
+import { placeCaretInSlashBlock } from './noteComposerSlashBlock'
+import {
+  isInlineSlashKind,
+  type NoteSlashCommand
+} from './noteSlashRegistry'
 
-export type ComposerBlockKind = 'code' | 'heading' | 'quote' | 'list' | 'bold' | 'underline'
+export type { ComposerBlockKind } from './noteComposerSlashBlock'
+export {
+  caretComposerBlockKind,
+  caretSlashBlockKind,
+  exitComposerBlockEdit,
+  exitSlashBlockEdit,
+  findActiveComposerBlock,
+  findActiveSlashBlock,
+  isSlashBlockEditing,
+  placeCaretInSlashBlock,
+  trySlashBlockEscapeKey
+} from './noteComposerSlashBlock'
 
-/** 光标是否位于 slash 插入的可编辑块内 */
-export function caretComposerBlockKind(el: HTMLElement | null): ComposerBlockKind | null {
-  const sel = window.getSelection()
-  if (!sel?.anchorNode || !el) return null
-  const anchor = sel.anchorNode
-  const element =
-    anchor.nodeType === Node.ELEMENT_NODE
-      ? (anchor as HTMLElement)
-      : anchor.parentElement
-  if (!element || !el.contains(element)) return null
-
-  if (element.closest('pre[data-note-block="code"]')) return 'code'
-  if (element.closest('h2[data-note-block="heading"]')) return 'heading'
-  if (element.closest('blockquote[data-note-block="quote"]')) return 'quote'
-  if (element.closest('ul[data-note-block="list"]')) return 'list'
-  if (element.closest('p[data-note-block="bold"]')) return 'bold'
-  if (element.closest('p[data-note-block="underline"]')) return 'underline'
-  return null
+function collapseSelectionToEnd(replaceRange: Range, sel: Selection): void {
+  replaceRange.collapse(false)
+  sel.removeAllRanges()
+  sel.addRange(replaceRange)
 }
 
-function caretTargetForBlock(cmd: NoteSlashCommand): string {
-  switch (cmd.id) {
-    case 'daima':
-      return 'pre[data-note-block="code"] code'
-    case 'biaoti':
-      return 'h2[data-note-block="heading"]'
-    case 'liebiao':
-      return 'ul[data-note-block="list"] li'
-    case 'yinyong':
-      return 'blockquote[data-note-block="quote"] p'
-    case 'jialuo':
-      return 'p[data-note-block="bold"] strong'
-    case 'xiahuaxian':
-      return 'p[data-note-block="underline"] u'
+function getContentEditableRoot(from: Node | null): HTMLElement | null {
+  if (!from) return null
+  const el =
+    from.nodeType === Node.ELEMENT_NODE ? (from as HTMLElement) : from.parentElement
+  const root = el?.closest('[contenteditable="true"], [contenteditable=""]') as HTMLElement | null
+  return root?.isContentEditable ? root : null
+}
+
+function tryExecInsertHtml(root: HTMLElement | null, html: string): boolean {
+  if (!root || typeof document.execCommand !== 'function') return false
+  try {
+    return document.execCommand('insertHTML', false, html)
+  } catch {
+    return false
+  }
+}
+
+function insertHtmlAtSelection(html: string): void {
+  const sel = window.getSelection()
+  if (!sel || sel.rangeCount === 0) return
+  const range = sel.getRangeAt(0)
+  const root = getContentEditableRoot(range.commonAncestorContainer)
+  if (root) root.focus()
+  if (tryExecInsertHtml(root, html)) return
+
+  const fragment = range.createContextualFragment(html)
+  const last = fragment.lastChild
+  range.insertNode(fragment)
+  if (last) {
+    range.setStartAfter(last)
+    range.collapse(true)
+  } else {
+    range.collapse(false)
+  }
+  sel.removeAllRanges()
+  sel.addRange(range)
+}
+
+function replaceRangeWithHtml(range: Range, html: string): void {
+  const sel = window.getSelection()
+  if (!sel) return
+  const next = range.cloneRange()
+  next.deleteContents()
+  const root = getContentEditableRoot(next.commonAncestorContainer)
+  if (root) root.focus()
+  sel.removeAllRanges()
+  sel.addRange(next)
+  if (tryExecInsertHtml(root, html)) return
+
+  const fragment = next.createContextualFragment(html)
+  const last = fragment.lastChild
+  next.insertNode(fragment)
+  if (last) {
+    next.setStartAfter(last)
+    next.collapse(true)
+  } else {
+    next.collapse(false)
+  }
+  sel.removeAllRanges()
+  sel.addRange(next)
+}
+
+function applyInlineSlashHtml(cmd: NoteSlashCommand, pad: string): void {
+  const html = cmd.buildVisualHtml?.(pad) ?? slashCommandToVisualHtml(cmd)
+  insertHtmlAtSelection(html)
+}
+
+/** 行内 slash：优先 execCommand（Chromium），否则回退 insertHTML */
+function applyInlineSlashVisual(
+  el: HTMLElement,
+  slashStart: number,
+  cmd: NoteSlashCommand,
+  replaceEnd?: number
+): void {
+  const sel = window.getSelection()
+  if (!sel || sel.rangeCount === 0) return
+
+  const range = sel.getRangeAt(0)
+  const pre = range.cloneRange()
+  pre.selectNodeContents(el)
+  pre.setEnd(range.startContainer, range.startOffset)
+  const endChars = replaceEnd ?? pre.toString().length
+
+  const replaceRange = findSlashReplaceRange(el, slashStart, endChars)
+  if (replaceRange) {
+    replaceRange.deleteContents()
+    collapseSelectionToEnd(replaceRange, sel)
+  }
+
+  el.focus()
+  const pad = EDITABLE_BLOCK_PAD
+
+  switch (cmd.blockKind) {
+    case 'bold':
+    case 'underline':
+    case 'color':
+      applyInlineSlashHtml(cmd, pad)
+      break
     default:
-      return '[data-note-block]'
-  }
-}
-
-function ensureTextLeaf(node: Node, pad: string): Text {
-  if (node.nodeType === Node.TEXT_NODE) return node as Text
-  const el = node as HTMLElement
-  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
-  const existing = walker.nextNode() as Text | null
-  if (existing) return existing
-  return el.appendChild(document.createTextNode(pad))
-}
-
-/** 将光标移入刚插入的预览块内部，便于直接输入 */
-export function placeCaretInSlashBlock(root: HTMLElement, cmd: NoteSlashCommand): void {
-  const sel = window.getSelection()
-  if (!sel) return
-
-  const selector = caretTargetForBlock(cmd)
-  const targets = root.querySelectorAll(selector)
-  const target = targets[targets.length - 1]
-  if (!target) return
-
-  const textNode = ensureTextLeaf(target, EDITABLE_BLOCK_PAD)
-  const offset = textNode.textContent?.length ?? 0
-  const range = document.createRange()
-  range.setStart(textNode, offset)
-  range.collapse(true)
-  sel.removeAllRanges()
-  sel.addRange(range)
-  root.focus()
-}
-
-export function findActiveComposerBlock(root: HTMLElement): HTMLElement | null {
-  const sel = window.getSelection()
-  if (!sel?.anchorNode || !root.contains(sel.anchorNode)) return null
-  const anchor = sel.anchorNode
-  const element =
-    anchor.nodeType === Node.ELEMENT_NODE
-      ? (anchor as HTMLElement)
-      : anchor.parentElement
-  return (element?.closest('[data-note-block]') as HTMLElement | null) ?? null
-}
-
-function ensureExitParagraphAfter(block: HTMLElement): HTMLElement {
-  const next = block.nextElementSibling
-  if (
-    next instanceof HTMLParagraphElement &&
-    !next.hasAttribute('data-note-block') &&
-    !next.querySelector('[data-note-block]')
-  ) {
-    if (!next.textContent?.replace(/\u200B/g, '').length) {
-      next.textContent = ''
-      next.appendChild(document.createTextNode(EDITABLE_BLOCK_PAD))
-    }
-    return next
+      insertHtmlAtSelection(slashCommandToVisualHtml(cmd))
   }
 
-  const p = document.createElement('p')
-  p.className = 'doc-note-composer-exit-line'
-  p.appendChild(document.createTextNode(EDITABLE_BLOCK_PAD))
-  block.after(p)
-  return p
-}
-
-function placeCaretInParagraph(p: HTMLElement, root: HTMLElement): void {
-  const sel = window.getSelection()
-  if (!sel) return
-  const text =
-    (p.firstChild?.nodeType === Node.TEXT_NODE
-      ? (p.firstChild as Text)
-      : p.appendChild(document.createTextNode(EDITABLE_BLOCK_PAD))) ?? null
-  if (!text) return
-  const range = document.createRange()
-  range.setStart(text, text.textContent?.length ?? 0)
-  range.collapse(true)
-  sel.removeAllRanges()
-  sel.addRange(range)
-  root.focus()
-}
-
-/** 退出当前预览块编辑：光标移到块外，可继续输入正文 */
-export function exitComposerBlockEdit(root: HTMLElement): boolean {
-  const block = findActiveComposerBlock(root)
-  if (!block) return false
-  const exitLine = ensureExitParagraphAfter(block)
-  placeCaretInParagraph(exitLine, root)
-  return true
+  requestAnimationFrame(() => placeCaretInSlashBlock(el, cmd))
 }
 
 /** 在 contenteditable 选区上应用富文本格式 */
@@ -133,37 +134,24 @@ export function focusEditor(el: HTMLElement | null): void {
   el?.focus()
 }
 
+/** 恢复编辑器选区（工具栏/颜色菜单点击前调用） */
+export function restoreComposerSelection(root: HTMLElement, saved: Range | null): boolean {
+  if (!saved) return false
+  const anchor = saved.commonAncestorContainer
+  if (!root.contains(anchor)) return false
+  const sel = window.getSelection()
+  if (!sel) return false
+  sel.removeAllRanges()
+  sel.addRange(saved)
+  root.focus()
+  return true
+}
+
 export function execRichCommand(command: string, value?: string): boolean {
   try {
     return document.execCommand(command, false, value)
   } catch {
     return false
-  }
-}
-
-const CURSOR_MARKER = '\u2060'
-
-function restoreCursorFromMarker(sel: Selection, marker: string): void {
-  const anchor = sel.anchorNode
-  const root =
-    anchor instanceof HTMLElement
-      ? anchor.closest('[contenteditable]')
-      : anchor?.parentElement?.closest('[contenteditable]')
-  if (!root) return
-
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
-  while (walker.nextNode()) {
-    const node = walker.currentNode as Text
-    const text = node.textContent ?? ''
-    const idx = text.indexOf(marker)
-    if (idx < 0) continue
-    node.textContent = text.slice(0, idx) + text.slice(idx + marker.length)
-    const range = document.createRange()
-    range.setStart(node, idx)
-    range.collapse(true)
-    sel.removeAllRanges()
-    sel.addRange(range)
-    return
   }
 }
 
@@ -180,21 +168,20 @@ export function wrapSelectionHtml(open: string, close: string): void {
   const range = sel.getRangeAt(0)
 
   if (range.collapsed) {
-    document.execCommand('insertHTML', false, `${open}${CURSOR_MARKER}${close}`)
-    restoreCursorFromMarker(sel, CURSOR_MARKER)
+    replaceRangeWithHtml(range, `${open}${EDITABLE_BLOCK_PAD}${close}`)
     return
   }
 
   const selected = selectedRangeHtml(range)
-  document.execCommand('insertHTML', false, `${open}${selected}${close}`)
+  replaceRangeWithHtml(range, `${open}${selected}${close}`)
 }
 
 export function applyBold(): void {
-  execRichCommand('bold')
+  wrapSelectionHtml('<strong>', '</strong>')
 }
 
 export function applyUnderline(): void {
-  execRichCommand('underline')
+  wrapSelectionHtml('<u>', '</u>')
 }
 
 export function applyTextColor(color: string): void {
@@ -281,6 +268,11 @@ export function replaceSlashCommandVisual(
   cmd: NoteSlashCommand,
   replaceEnd?: number
 ): void {
+  if (cmd.blockKind && isInlineSlashKind(cmd.blockKind)) {
+    applyInlineSlashVisual(el, slashStart, cmd, replaceEnd)
+    return
+  }
+
   const sel = window.getSelection()
   if (!sel || sel.rangeCount === 0) return
 

@@ -4,6 +4,7 @@ import {
   isSlashCommandAnchor,
   parseSlashAtCursor,
   resolveSlashCommand,
+  trySlashCompleteOnKey,
   trySlashCompleteOnSpace
 } from '../src/renderer/src/features/notes/noteSlashCommands'
 
@@ -23,6 +24,16 @@ describe('noteSlashCommands', () => {
 
   it('ignores numeric fractions', () => {
     expect(isSlashCommandAnchor('1/2', 1)).toBe(false)
+  })
+
+  it('auto-applies on key when id is complete: /b', () => {
+    const result = trySlashCompleteOnKey('/b')
+    expect(result?.command.id).toBe('b')
+    expect(result?.slashStart).toBe(0)
+  })
+
+  it('does not auto-apply partial id on key', () => {
+    expect(trySlashCompleteOnKey('/bi')).toBeNull()
   })
 
   it.each(NOTE_SLASH_COMMANDS.map((cmd) => [cmd.id] as const))(

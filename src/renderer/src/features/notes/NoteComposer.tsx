@@ -16,17 +16,21 @@ import {
   applyHighlight,
   applyTextColor,
   applyUnderline,
-  focusEditor,
-  caretComposerBlockKind,
-  exitComposerBlockEdit,
-  findActiveComposerBlock,
   replaceSlashCommandVisual,
+  restoreComposerSelection,
   textBeforeCursor
 } from './noteComposerRich'
+import {
+  caretSlashBlockKind,
+  exitSlashBlockEdit,
+  findActiveSlashBlock,
+  isSlashBlockEditing
+} from './noteComposerSlashBlock'
 import {
   applySlashTemplate,
   filterSlashCommands,
   parseSlashAtCursor,
+  trySlashCompleteOnKey,
   trySlashCompleteOnSpace,
   type NoteSlashCommand
 } from './noteSlashCommands'
@@ -78,6 +82,8 @@ export function NoteComposer({
   const inputWrapRef = useRef<HTMLDivElement>(null)
   const skipVisualSyncRef = useRef(false)
   const skipSlashDetectRef = useRef(false)
+  const suppressBlockEditingRef = useRef(false)
+  const savedVisualRangeRef = useRef<Range | null>(null)
 
   const slashItems = filterSlashCommands(slashQuery)
   const isInline = variant === 'inline'
@@ -95,17 +101,30 @@ export function NoteComposer({
   }, [])
 
   const refreshBlockEditing = useCallback((): void => {
-    setBlockEditing(caretComposerBlockKind(visualRef.current) != null)
+    if (suppressBlockEditingRef.current) return
+    setBlockEditing(isSlashBlockEditing(visualRef.current))
   }, [])
 
-  const tryExitBlockEdit = useCallback((): boolean => {
-    const visual = visualRef.current
-    if (!visual || inputMode !== 'visual') return false
-    if (!exitComposerBlockEdit(visual)) return false
-    syncBodyFromVisual()
-    setBlockEditing(false)
-    return true
-  }, [inputMode, syncBodyFromVisual])
+  const tryExitBlockEdit = useCallback(
+    (e?: Pick<KeyboardEvent, 'preventDefault' | 'stopImmediatePropagation'>): boolean => {
+      const visual = visualRef.current
+      if (!visual || inputMode !== 'visual') return false
+      if (!exitSlashBlockEdit(visual)) return false
+      if (e) {
+        e.preventDefault()
+        e.stopImmediatePropagation()
+      }
+      suppressBlockEditingRef.current = true
+      setBlockEditing(false)
+      syncBodyFromVisual()
+      requestAnimationFrame(() => {
+        suppressBlockEditingRef.current = false
+        refreshBlockEditing()
+      })
+      return true
+    },
+    [inputMode, refreshBlockEditing, syncBodyFromVisual]
+  )
 
   const applyVisualHtml = useCallback((html: string): void => {
     const el = visualRef.current
@@ -167,62 +186,67 @@ export function NoteComposer({
     [body]
   )
 
+  const restoreVisualSelection = useCallback((): void => {
+    const el = visualRef.current
+    if (!el) return
+    restoreComposerSelection(el, savedVisualRangeRef.current)
+  }, [])
+
+  const runVisualFormat = useCallback(
+    (apply: () => void): void => {
+      restoreVisualSelection()
+      apply()
+      syncBodyFromVisual()
+    },
+    [restoreVisualSelection, syncBodyFromVisual]
+  )
+
   const handleBold = useCallback((): void => {
     if (inputMode === 'visual') {
-      focusEditor(visualRef.current)
-      applyBold()
-      syncBodyFromVisual()
+      runVisualFormat(applyBold)
       return
     }
     applySourceFormat('**', '**')
-  }, [applySourceFormat, inputMode, syncBodyFromVisual])
+  }, [applySourceFormat, inputMode, runVisualFormat])
 
   const handleUnderline = useCallback((): void => {
     if (inputMode === 'visual') {
-      focusEditor(visualRef.current)
-      applyUnderline()
-      syncBodyFromVisual()
+      runVisualFormat(applyUnderline)
       return
     }
     applySourceFormat('<u>', '</u>')
-  }, [applySourceFormat, inputMode, syncBodyFromVisual])
+  }, [applySourceFormat, inputMode, runVisualFormat])
 
   const handleFontSize = useCallback((): void => {
     if (inputMode === 'visual') {
-      focusEditor(visualRef.current)
-      applyFontSize(fontSize)
-      syncBodyFromVisual()
+      runVisualFormat(() => applyFontSize(fontSize))
       return
     }
     applySourceWrapped((s) => wrapNoteFontSize(fontSize, s))
-  }, [applySourceWrapped, fontSize, inputMode, syncBodyFromVisual])
+  }, [applySourceWrapped, fontSize, inputMode, runVisualFormat])
 
   const handleTextColor = useCallback(
     (color: string): void => {
       if (inputMode === 'visual') {
-        focusEditor(visualRef.current)
-        applyTextColor(color)
-        syncBodyFromVisual()
+        runVisualFormat(() => applyTextColor(color))
       } else {
         applySourceWrapped((s) => wrapNoteTextColor(color, s))
       }
       setColorMenu(null)
     },
-    [applySourceWrapped, inputMode, syncBodyFromVisual]
+    [applySourceWrapped, inputMode, runVisualFormat]
   )
 
   const handleHighlightColor = useCallback(
     (color: string): void => {
       if (inputMode === 'visual') {
-        focusEditor(visualRef.current)
-        applyHighlight(color)
-        syncBodyFromVisual()
+        runVisualFormat(() => applyHighlight(color))
       } else {
         applySourceWrapped((s) => wrapNoteHighlight(color, s))
       }
       setColorMenu(null)
     },
-    [applySourceWrapped, inputMode, syncBodyFromVisual]
+    [applySourceWrapped, inputMode, runVisualFormat]
   )
 
   const detectSlash = useCallback(
@@ -246,6 +270,7 @@ export function NoteComposer({
         if (!el) return
         replaceSlashCommandVisual(el, slashStart, cmd, replaceEnd)
         syncBodyFromVisual()
+        refreshBlockEditing()
         requestAnimationFrame(refreshBlockEditing)
       } else {
         const { text: template, cursorOffset } = applySlashTemplate(cmd.template)
@@ -308,11 +333,16 @@ export function NoteComposer({
     if (skipVisualSyncRef.current) return
     const el = visualRef.current
     if (!el) return
+    const before = textBeforeCursor(el)
+    const completed = trySlashCompleteOnSpace(before)
+    if (completed) {
+      applySlashAt(completed.command, completed.slashStart, before.length)
+      return
+    }
+    detectSlash(before)
     syncBodyFromVisual()
     refreshBlockEditing()
-    const before = textBeforeCursor(el)
-    handleSlashInput(before, before.length)
-  }, [handleSlashInput, refreshBlockEditing, syncBodyFromVisual])
+  }, [applySlashAt, detectSlash, refreshBlockEditing, syncBodyFromVisual])
 
   const handleSourceChange = useCallback(
     (value: string): void => {
@@ -346,6 +376,24 @@ export function NoteComposer({
 
   const handleKeyDown = useCallback(
     (e: ReactKeyboardEvent<HTMLTextAreaElement | HTMLDivElement>): void => {
+      if (
+        e.key === ' ' &&
+        !e.defaultPrevented &&
+        inputMode === 'visual' &&
+        !(e.ctrlKey || e.metaKey)
+      ) {
+        const el = visualRef.current
+        if (el) {
+          const before = textBeforeCursor(el)
+          const completed = trySlashCompleteOnKey(before)
+          if (completed) {
+            e.preventDefault()
+            applySlashAt(completed.command, completed.slashStart, before.length)
+            return
+          }
+        }
+      }
+
       if (slashOpen && slashItems.length > 0) {
         if (e.key === 'ArrowDown') {
           e.preventDefault()
@@ -362,21 +410,19 @@ export function NoteComposer({
           pickSlashCommand(slashItems[slashIndex]!)
           return
         }
-        if (e.key === 'Escape') {
-          e.preventDefault()
-          closeSlash()
-          return
-        }
         if (e.key === 'ArrowRight') {
           closeSlash()
           return
         }
       }
 
-      if (e.key === 'Escape' && inputMode === 'visual' && tryExitBlockEdit()) {
-        e.preventDefault()
-        e.stopPropagation()
-        return
+      if (e.key === 'Escape' && inputMode === 'visual') {
+        if (tryExitBlockEdit(e)) return
+        if (slashOpen && slashItems.length > 0) {
+          e.preventDefault()
+          closeSlash()
+          return
+        }
       }
 
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
@@ -399,7 +445,7 @@ export function NoteComposer({
       }
 
       if (e.key === 'Enter' && !e.shiftKey && !(e.ctrlKey || e.metaKey)) {
-        if (inputMode === 'visual' && caretComposerBlockKind(visualRef.current)) {
+        if (inputMode === 'visual' && caretSlashBlockKind(visualRef.current)) {
           e.preventDefault()
           document.execCommand('insertLineBreak')
           syncBodyFromVisual()
@@ -410,6 +456,7 @@ export function NoteComposer({
       }
     },
     [
+      applySlashAt,
       body,
       closeSlash,
       handleSubmit,
@@ -428,24 +475,30 @@ export function NoteComposer({
       setBlockEditing(false)
       return
     }
-    const onSelectionChange = (): void => refreshBlockEditing()
+    const onSelectionChange = (): void => {
+      const el = visualRef.current
+      const sel = window.getSelection()
+      if (el && sel && sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0)
+        if (el.contains(range.commonAncestorContainer)) {
+          savedVisualRangeRef.current = range.cloneRange()
+        }
+      }
+      refreshBlockEditing()
+    }
     document.addEventListener('selectionchange', onSelectionChange)
     return () => document.removeEventListener('selectionchange', onSelectionChange)
   }, [inputMode, refreshBlockEditing])
 
   useEffect(() => {
-    if (inputMode !== 'visual' || !blockEditing) return
+    if (inputMode !== 'visual') return
     const onKeyDown = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape' || e.defaultPrevented) return
-      if (!caretComposerBlockKind(visualRef.current)) return
-      if (tryExitBlockEdit()) {
-        e.preventDefault()
-        e.stopImmediatePropagation()
-      }
+      tryExitBlockEdit(e)
     }
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [blockEditing, inputMode, tryExitBlockEdit])
+  }, [inputMode, tryExitBlockEdit])
 
   useEffect(() => {
     if (slashIndex >= slashItems.length) setSlashIndex(0)
@@ -473,9 +526,11 @@ export function NoteComposer({
   }, [closeSlash, slashOpen])
 
   useEffect(() => {
-    if (inputMode === 'visual' && body === '' && visualRef.current) {
-      visualRef.current.innerHTML = ''
-    }
+    const el = visualRef.current
+    if (inputMode !== 'visual' || !el || body !== '') return
+    // /b 等 slash 刚插入时 DOM 仅有零宽占位，序列化 body 为空，不能因此清掉编辑器
+    if (el.childNodes.length > 0) return
+    el.innerHTML = ''
   }, [body, inputMode])
 
   const canSubmit = !isBodyEmpty(body)
@@ -508,14 +563,20 @@ export function NoteComposer({
           label="加粗"
           size={14}
           disabled={disabled}
-          onClick={handleBold}
+          onMouseDown={(e) => {
+            e.preventDefault()
+            handleBold()
+          }}
         />
         <IconButton
           icon={Underline}
           label="下划线"
           size={14}
           disabled={disabled}
-          onClick={handleUnderline}
+          onMouseDown={(e) => {
+            e.preventDefault()
+            handleUnderline()
+          }}
         />
         <div className="doc-note-format-font">
           <Type size={13} aria-hidden />
@@ -536,7 +597,10 @@ export function NoteComposer({
             type="button"
             className="doc-note-font-apply"
             disabled={disabled}
-            onClick={handleFontSize}
+            onMouseDown={(e) => {
+              e.preventDefault()
+              handleFontSize()
+            }}
           >
             应用
           </button>
@@ -548,7 +612,10 @@ export function NoteComposer({
             size={14}
             disabled={disabled}
             className={colorMenu === 'text' ? 'active' : ''}
-            onClick={() => setColorMenu((m) => (m === 'text' ? null : 'text'))}
+            onMouseDown={(e) => {
+              e.preventDefault()
+              setColorMenu((m) => (m === 'text' ? null : 'text'))
+            }}
           />
           {colorMenu === 'text' && (
             <div className="doc-note-color-menu" role="menu">
@@ -559,7 +626,10 @@ export function NoteComposer({
                   role="menuitem"
                   className="doc-note-color-item"
                   title={opt.label}
-                  onClick={() => handleTextColor(opt.value)}
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    handleTextColor(opt.value)
+                  }}
                 >
                   {opt.value ? (
                     <span className="doc-note-color-swatch" style={{ backgroundColor: opt.value }} />
@@ -576,7 +646,10 @@ export function NoteComposer({
             disabled={disabled}
             title="高亮背景"
             aria-label="高亮背景"
-            onClick={() => setColorMenu((m) => (m === 'highlight' ? null : 'highlight'))}
+            onMouseDown={(e) => {
+              e.preventDefault()
+              setColorMenu((m) => (m === 'highlight' ? null : 'highlight'))
+            }}
           >
             H
           </button>
@@ -589,7 +662,10 @@ export function NoteComposer({
                   role="menuitem"
                   className="doc-note-color-item"
                   title={opt.label}
-                  onClick={() => handleHighlightColor(opt.value)}
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    handleHighlightColor(opt.value)
+                  }}
                 >
                   <span className="doc-note-color-swatch" style={{ backgroundColor: opt.value }} />
                 </button>
@@ -647,7 +723,7 @@ export function NoteComposer({
                 if (!blockEditing) return
                 const el = visualRef.current
                 if (!el) return
-                const block = findActiveComposerBlock(el)
+                const block = findActiveSlashBlock(el)
                 if (!block || block.contains(e.target as Node)) return
                 const rect = block.getBoundingClientRect()
                 if (e.clientY >= rect.bottom - 4 || e.target === el) {
@@ -657,16 +733,6 @@ export function NoteComposer({
               }}
               onKeyDown={handleKeyDown}
             />
-            {blockEditing && (
-              <div
-                className="doc-note-composer-block-exit-pad"
-                role="presentation"
-                onMouseDown={(e) => {
-                  e.preventDefault()
-                  tryExitBlockEdit()
-                }}
-              />
-            )}
           </>
         ) : (
           <textarea

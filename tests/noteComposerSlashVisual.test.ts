@@ -20,11 +20,15 @@ describe('noteComposerContent slash visual', () => {
     if (cmd.id === 'yinyong') {
       expect(html).toMatch(/<blockquote[\s>]/i)
     }
-    if (cmd.id === 'jialuo') {
-      expect(html).toMatch(/<strong[\s>]/i)
+    if (cmd.id === 'jialuo' || cmd.id === 'b') {
+      expect(html).toMatch(/<strong[\s>][\s\S]*data-note-block="bold"/i)
     }
     if (cmd.id === 'xiahuaxian') {
-      expect(html).toMatch(/<u[\s>]/i)
+      expect(html).toMatch(/<u[\s>][\s\S]*data-note-block="underline"/i)
+    }
+    if (cmd.id === 'red') {
+      expect(html).toMatch(/data-note-block="color"/i)
+      expect(html).toMatch(/color:\s*#e53935/i)
     }
   })
 })

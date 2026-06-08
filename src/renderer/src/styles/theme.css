@@ -5029,6 +5029,16 @@ u.annotation-underline {
   overflow-x: auto;
 }
 
+.doc-note-entry-preview strong,
+.doc-note-entry-preview b {
+  font-weight: 700;
+}
+
+.doc-note-entry-preview mark {
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
 .doc-note-entry-textarea {
   width: 100%;
   min-height: 120px;
@@ -5229,7 +5239,7 @@ u.annotation-underline {
   margin-bottom: 0;
 }
 
-.doc-note-composer-visual pre[data-note-block='code'] {
+.doc-note-composer-visual pre {
   background: var(--bg-tertiary, #1e1e1e);
   padding: 8px 10px;
   border-radius: 6px;
@@ -5241,7 +5251,7 @@ u.annotation-underline {
   word-break: break-word;
 }
 
-.doc-note-composer-visual pre[data-note-block='code'] code {
+.doc-note-composer-visual pre code {
   display: block;
   min-height: 1.45em;
   white-space: inherit;
@@ -5250,21 +5260,21 @@ u.annotation-underline {
   padding: 0;
 }
 
-.doc-note-composer-visual h2[data-note-block='heading'] {
+.doc-note-composer-visual h2 {
   min-height: 1.2em;
   margin: 6px 0;
   font-size: 1.15em;
   outline: none;
 }
 
-.doc-note-composer-visual blockquote[data-note-block='quote'] {
+.doc-note-composer-visual blockquote {
   margin: 6px 0;
   padding: 4px 0 4px 10px;
   border-left: 3px solid var(--accent);
   color: var(--text-secondary);
 }
 
-.doc-note-composer-visual ul[data-note-block='list'] {
+.doc-note-composer-visual ul {
   margin: 6px 0;
   padding-left: 1.25em;
 }
@@ -5273,16 +5283,25 @@ u.annotation-underline {
   outline: none;
 }
 
-.doc-note-composer-block-exit-pad {
-  min-height: 28px;
-  margin-top: 2px;
-  border-radius: 0 0 8px 8px;
-  cursor: text;
+.doc-note-composer-visual strong,
+.doc-note-composer-visual b,
+.doc-note-composer-visual [data-note-block='bold'] {
+  font-weight: 700;
 }
 
-.doc-note-composer-exit-line {
-  margin: 4px 0;
-  min-height: 1.4em;
+.doc-note-composer-visual u,
+.doc-note-composer-visual [data-note-block='underline'] {
+  text-decoration: underline;
+}
+
+.doc-note-composer-visual mark {
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.doc-note-composer-caret-anchor {
+  display: inline;
+  line-height: inherit;
 }
 
 .doc-note-slash-menu {

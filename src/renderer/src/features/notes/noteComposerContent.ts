@@ -1,54 +1,15 @@
-import DOMPurify from 'dompurify'
 import { renderNoteMarkdownHtml } from './noteMarkdown'
-import type { NoteSlashCommand } from './noteSlashCommands'
+import { sanitizeNoteHtml } from './noteHtmlSanitize'
+import { SLASH_CURSOR_MARKER, type NoteSlashCommand } from './noteSlashRegistry'
 
-const ALLOWED_TAGS = [
-  'b',
-  'strong',
-  'i',
-  'em',
-  'u',
-  'mark',
-  'span',
-  'br',
-  'p',
-  'div',
-  'code',
-  'pre',
-  'h1',
-  'h2',
-  'h3',
-  'h4',
-  'ul',
-  'ol',
-  'li',
-  'blockquote',
-  'a'
-]
-
-const VISUAL_CURSOR_MARKER = '\u2060'
 /** 占位以保证空块内可放置光标；序列化时剔除 */
 export const EDITABLE_BLOCK_PAD = '\u200B'
 
 /** slash 命令 → 可视化块 HTML（不经过 ``` / ## 等 MD 符号） */
 export function slashCommandToVisualHtml(cmd: NoteSlashCommand): string {
   const pad = EDITABLE_BLOCK_PAD
-  switch (cmd.id) {
-    case 'daima':
-      return `<pre data-note-block="code"><code>${pad}</code></pre>`
-    case 'biaoti':
-      return `<h2 data-note-block="heading">${pad}</h2>`
-    case 'liebiao':
-      return `<ul data-note-block="list"><li>${pad}</li></ul>`
-    case 'yinyong':
-      return `<blockquote data-note-block="quote"><p>${pad}</p></blockquote>`
-    case 'jialuo':
-      return `<p data-note-block="bold"><strong>${pad}</strong></p>`
-    case 'xiahuaxian':
-      return `<p data-note-block="underline"><u>${pad}</u></p>`
-    default:
-      return renderNoteMarkdownHtml(cmd.template.replace('$CURSOR$', ' '))
-  }
+  if (cmd.buildVisualHtml) return cmd.buildVisualHtml(pad)
+  return renderNoteMarkdownHtml(cmd.template.replace(SLASH_CURSOR_MARKER, pad))
 }
 
 /** 将笔记正文（MD + 内联 HTML）渲染为可视化编辑 HTML */
@@ -59,7 +20,7 @@ export function noteBodyToVisualHtml(body: string): string {
 
 /** 将可视化编辑区 HTML 序列化为可存储的正文 */
 export function visualHtmlToNoteBody(html: string): string {
-  const clean = DOMPurify.sanitize(html, { ALLOWED_TAGS })
+  const clean = sanitizeNoteHtml(html)
   const div = document.createElement('div')
   div.innerHTML = clean
   return serializeChildren(div.childNodes).replace(/\n{3,}/g, '\n\n').trim()
@@ -77,12 +38,24 @@ function normalizeEditableText(text: string): string {
   return text.replace(/\u200B/g, '')
 }
 
+function outerHtmlForStorage(el: HTMLElement): string {
+  const clone = el.cloneNode(true) as HTMLElement
+  clone.removeAttribute('data-note-block')
+  clone.querySelectorAll('[data-note-block]').forEach((node) => {
+    if (node instanceof HTMLElement) node.removeAttribute('data-note-block')
+  })
+  return clone.outerHTML
+}
+
 function serializeNode(node: Node): string {
   if (node.nodeType === Node.TEXT_NODE) {
     return normalizeEditableText(node.textContent ?? '')
   }
   if (node.nodeType !== Node.ELEMENT_NODE) return ''
   const el = node as HTMLElement
+  if (el.classList.contains('doc-note-composer-caret-anchor')) {
+    return normalizeEditableText(el.textContent ?? '')
+  }
   const tag = el.tagName.toLowerCase()
   const inner = serializeChildren(el.childNodes)
 
@@ -109,7 +82,7 @@ function serializeNode(node: Node): string {
     case 'h4':
     case 'blockquote':
     case 'a':
-      return el.outerHTML
+      return outerHtmlForStorage(el)
     case 'ul':
     case 'ol':
       return `${inner}\n`
