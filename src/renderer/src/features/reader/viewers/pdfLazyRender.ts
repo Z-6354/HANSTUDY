@@ -1,4 +1,5 @@
 import * as pdfjsLib from 'pdfjs-dist'
+import { getPdfOutputScale } from './pdfViewerPerf'
 import { mountPdfTextLayer, type PdfTextLayerHandle } from './pdfTextLayer'
 
 export interface PdfPageSlot {
@@ -40,31 +41,30 @@ export function resizeSlotToScale(slot: PdfPageSlot, scale: number): void {
   applySlotSize(slot.wrap, slot.baseWidth * scale, slot.baseHeight * scale)
 }
 
-/** 缩放重绘前拉伸旧画布填满 slot，避免从左上角 scale 造成视觉偏移 */
-export function fitStaleCanvasToSlot(slot: PdfPageSlot, newScale: number, oldScale: number): void {
+/** 低清预览阶段画布被 CSS 拉伸填满 slot */
+export function slotHasStretchedCanvas(slot: PdfPageSlot): boolean {
   const canvas = slot.wrap.querySelector('canvas.pdf-page') as HTMLCanvasElement | null
-  if (!canvas || oldScale <= 0) return
-  const factor = newScale / oldScale
-  if (Math.abs(factor - 1) < 0.001) {
-    canvas.style.width = ''
-    canvas.style.height = ''
-    canvas.style.transform = ''
-    canvas.style.transformOrigin = ''
-    return
-  }
-  canvas.style.transform = ''
-  canvas.style.transformOrigin = ''
-  canvas.style.width = '100%'
-  canvas.style.height = '100%'
+  if (!canvas) return false
+  return canvas.style.width === '100%' || canvas.style.height === '100%'
 }
 
-function clearStaleCanvasFit(canvasWrap: HTMLElement): void {
-  const canvas = canvasWrap.querySelector('canvas.pdf-page') as HTMLCanvasElement | null
-  if (!canvas) return
-  canvas.style.width = ''
-  canvas.style.height = ''
+/** 缩放重绘前拉伸旧画布填满 slot，避免从左上角 scale 造成视觉偏移 */
+export function fitStaleCanvasToSlot(
+  slot: PdfPageSlot,
+  slotScale: number,
+  bitmapScale: number
+): void {
+  const canvas = slot.wrap.querySelector('canvas.pdf-page') as HTMLCanvasElement | null
+  if (!canvas || bitmapScale <= 0) return
   canvas.style.transform = ''
   canvas.style.transformOrigin = ''
+  if (Math.abs(slotScale - bitmapScale) < 0.001) {
+    canvas.style.width = `${slot.baseWidth * slotScale}px`
+    canvas.style.height = `${slot.baseHeight * slotScale}px`
+    return
+  }
+  canvas.style.width = '100%'
+  canvas.style.height = '100%'
 }
 
 export async function buildPagePlaceholders(
@@ -94,6 +94,7 @@ export async function renderPdfPage(
 
   const page = await pdf.getPage(pageNo)
   const viewport = page.getViewport({ scale })
+  const outputScale = getPdfOutputScale()
 
   const canvasWrap = document.createElement('div')
   canvasWrap.className = 'pdf-canvas-wrap'
@@ -106,16 +107,21 @@ export async function renderPdfPage(
     throw new Error(`无法创建第 ${pageNo} 页画布`)
   }
 
-  canvas.width = viewport.width
-  canvas.height = viewport.height
-  await page.render({ canvasContext: context, viewport }).promise
+  canvas.width = Math.floor(viewport.width * outputScale)
+  canvas.height = Math.floor(viewport.height * outputScale)
+  canvas.style.width = `${viewport.width}px`
+  canvas.style.height = `${viewport.height}px`
+
+  const transform: number[] | undefined =
+    outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : undefined
+
+  await page.render({ canvasContext: context, viewport, transform }).promise
 
   if (signal?.cancelled()) {
     throw new Error('render cancelled')
   }
 
   canvasWrap.appendChild(canvas)
-  clearStaleCanvasFit(canvasWrap)
   swapPageCanvas(pageWrap, canvasWrap)
 
   return mountPdfTextLayer(page, viewport, pageWrap)

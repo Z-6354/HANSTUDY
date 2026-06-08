@@ -19,6 +19,19 @@ import {
   renameNoteEntry,
   writeNote
 } from '../infra/notesStore'
+import {
+  getDocumentNotes,
+  saveDocumentNotes
+} from '../infra/documentNotesStore'
+import {
+  createNotebook,
+  deleteNotebook,
+  getNotebook,
+  importLegacyThreadIfNeeded,
+  linkDocumentToNotebook,
+  listNotebooks,
+  saveNotebook
+} from '../infra/notebooksStore'
 import { getAppSettings, saveAppSettings } from '../config/appSettingsService'
 import { getBackendStatus } from '../runtime/javaBridge'
 import { buildFullMemorySnapshot } from '../infra/memoryDiagnostics'
@@ -274,6 +287,34 @@ export function registerAllHandlers(): void {
   })
   ipcRegistry.register(IPC.notes.rename, async (targetPath: unknown, newName: unknown) =>
     renameNoteEntry(String(targetPath), String(newName))
+  )
+
+  ipcRegistry.register(IPC.documentNotes.get, async (docPath: unknown) =>
+    getDocumentNotes(String(docPath))
+  )
+  ipcRegistry.register(IPC.documentNotes.save, async (thread: unknown) => {
+    await saveDocumentNotes(thread as import('../../shared/documentNotes').DocumentNoteThread)
+    return true
+  })
+
+  ipcRegistry.register(IPC.notebooks.list, async () => listNotebooks())
+  ipcRegistry.register(IPC.notebooks.get, async (id: unknown) => getNotebook(String(id)))
+  ipcRegistry.register(IPC.notebooks.save, async (notebook: unknown) => {
+    await saveNotebook(notebook as import('../../shared/notebooks').Notebook)
+    return true
+  })
+  ipcRegistry.register(IPC.notebooks.create, async (input: unknown) =>
+    createNotebook(input as import('../../shared/notebooks').CreateNotebookInput)
+  )
+  ipcRegistry.register(IPC.notebooks.delete, async (id: unknown) => {
+    await deleteNotebook(String(id))
+    return true
+  })
+  ipcRegistry.register(IPC.notebooks.linkDoc, async (notebookId: unknown, docPath: unknown) =>
+    linkDocumentToNotebook(String(notebookId), String(docPath))
+  )
+  ipcRegistry.register(IPC.notebooks.importLegacy, async (notebookId: unknown, docPath: unknown) =>
+    importLegacyThreadIfNeeded(String(notebookId), String(docPath))
   )
 
   ipcRegistry.register(IPC.settings.get, async () => {

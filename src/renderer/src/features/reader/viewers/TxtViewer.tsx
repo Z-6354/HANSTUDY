@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, Pencil, Save, ZoomIn, ZoomOut } from 'lucide
 import type * as MonacoApi from 'monaco-editor'
 import type { editor as MonacoEditor } from 'monaco-editor'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { WorkbenchMode } from '@shared/types'
 import { IconButton } from '../../../components/IconButton'
 import { SelectionToolbar } from '../selection/SelectionToolbar'
 import {
@@ -10,6 +11,8 @@ import {
   useSelectionToolbarEffect
 } from '../selection/useDomTextSelection'
 import { useViewerCommand } from '../find/useViewerCommand'
+import { useReaderNavigate } from '../navigation/useReaderNavigate'
+import { useReadingProgress } from '../../../hooks/useReadingProgress'
 import { useWorkspaceStore } from '../../../stores/workspaceStore'
 import { TextDocumentShell } from './TextDocumentShell'
 import { useLazyTextFile } from './useLazyTextFile'
@@ -30,9 +33,14 @@ import { useTxtZoom } from './useTxtZoom'
 interface TxtViewerProps {
   filePath: string
   isActive?: boolean
+  viewerSlot?: WorkbenchMode
 }
 
-export function TxtViewer({ filePath, isActive = true }: TxtViewerProps): JSX.Element {
+export function TxtViewer({
+  filePath,
+  isActive = true,
+  viewerSlot = 'browse'
+}: TxtViewerProps): JSX.Element {
   const { content, isLargeFile, loading, error, dirty, saving, setContent, save, revert } =
     useLazyTextFile(filePath)
   const [editMode, setEditMode] = useState(false)
@@ -59,9 +67,12 @@ export function TxtViewer({ filePath, isActive = true }: TxtViewerProps): JSX.El
   )
 
   const { sendToAI, setSelection, closeFindBar } = useWorkspaceStore()
+  const { saveProgress, loadProgress, isRestoringRef } = useReadingProgress(filePath, isActive)
+  const progressRestoredRef = useRef(false)
 
   const { bindZoomLabelRef, zoomIn, zoomOut, flushPendingZoom, initialMonacoFontSize } = useTxtZoom({
     filePath,
+    viewerSlot,
     editMode,
     editorRef,
     readerRef,
@@ -94,6 +105,7 @@ export function TxtViewer({ filePath, isActive = true }: TxtViewerProps): JSX.El
   useEffect(() => {
     setEditMode(false)
     setCurrentChapter(0)
+    progressRestoredRef.current = false
   }, [filePath])
 
   useEffect(() => {
@@ -175,11 +187,100 @@ export function TxtViewer({ filePath, isActive = true }: TxtViewerProps): JSX.El
   })
 
   const navigateToLine = useCallback(
-    (line: number): void => {
-      goToChapter(chapterIndexForLine(chapters, line))
+    (line: number, scrollRatio?: number): void => {
+      const idx = chapterIndexForLine(chapters, line)
+      goToChapter(idx)
+      if (scrollRatio == null) return
+      requestAnimationFrame(() => {
+        const el = chapterScrollRef.current
+        if (!el) return
+        const max = el.scrollHeight - el.clientHeight
+        el.scrollTop = scrollRatio * Math.max(0, max)
+      })
     },
     [chapters, goToChapter]
   )
+
+  useReaderNavigate(isActive, (anchor) => {
+    if (anchor.docType !== 'txt') return
+    if (editMode && anchor.monacoLine != null && anchor.monacoLine > 0) {
+      const editor = editorRef.current
+      editor?.revealLineInCenter(anchor.monacoLine)
+      editor?.setPosition({
+        lineNumber: anchor.monacoLine,
+        column: anchor.monacoColumn ?? 1
+      })
+      editor?.focus()
+      return
+    }
+    if (anchor.monacoLine != null && anchor.monacoLine > 0) {
+      navigateToLine(anchor.monacoLine, anchor.scrollRatio)
+      return
+    }
+    if (anchor.scrollRatio != null) {
+      requestAnimationFrame(() => {
+        const el = chapterScrollRef.current
+        if (!el) return
+        const max = el.scrollHeight - el.clientHeight
+        el.scrollTop = anchor.scrollRatio! * Math.max(0, max)
+      })
+    }
+  })
+
+  useEffect(() => {
+    if (!isActive || loading || !content || progressRestoredRef.current || chapters.length === 0) {
+      return
+    }
+    let cancelled = false
+    void loadProgress().then((saved) => {
+      if (cancelled || !saved) {
+        progressRestoredRef.current = true
+        return
+      }
+      isRestoringRef.current = true
+      if (saved.monacoLine != null && saved.monacoLine > 0) {
+        const idx = chapterIndexForLine(chapters, saved.monacoLine)
+        setCurrentChapter(Math.max(0, Math.min(idx, chapters.length - 1)))
+      }
+      requestAnimationFrame(() => {
+        if (cancelled) return
+        if (saved.scrollRatio != null && chapterScrollRef.current) {
+          const el = chapterScrollRef.current
+          const max = el.scrollHeight - el.clientHeight
+          el.scrollTop = saved.scrollRatio * Math.max(0, max)
+        }
+        isRestoringRef.current = false
+        progressRestoredRef.current = true
+      })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [chapters, content, isActive, isRestoringRef, loadProgress, loading])
+
+  useEffect(() => {
+    if (!isActive || loading || isRestoringRef.current || editMode) return
+    const line = activeChapter?.startLine ?? 1
+    saveProgress({ monacoLine: line })
+  }, [activeChapter?.startLine, currentChapter, editMode, isActive, loading, saveProgress])
+
+  useEffect(() => {
+    const el = chapterScrollRef.current
+    if (!el || editMode || !isActive) return
+
+    const onScroll = (): void => {
+      if (isRestoringRef.current) return
+      const max = el.scrollHeight - el.clientHeight
+      const ratio = max > 0 ? el.scrollTop / max : 0
+      saveProgress({
+        monacoLine: activeChapter?.startLine ?? 1,
+        scrollRatio: ratio
+      })
+    }
+
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [activeChapter?.startLine, editMode, isActive, isRestoringRef, saveProgress])
 
   const handleEditorMount = useCallback(
     (editor: MonacoEditor.IStandaloneCodeEditor, monaco: typeof MonacoApi): void => {

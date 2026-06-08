@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Check, ChevronRight, Minus, Settings, Sparkles, Square, X } from 'lucide-react'
 import { IconButton } from '../../components/IconButton'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
+import { isTextEditingTarget } from '../../utils/keyboardTarget'
 import type { LayoutPanelId } from '../../stores/workspaceStore'
 import { AppIcon } from './AppIcon'
 import { AboutModal } from './AboutModal'
@@ -143,10 +144,12 @@ export function TitleBar(): JSX.Element {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent): void => {
       if (e.ctrlKey && e.key === 'f' && !e.shiftKey) {
+        if (isTextEditingTarget(e.target)) return
         e.preventDefault()
         dispatchViewerCommand('find')
       }
       if (e.ctrlKey && e.key === 'a' && !e.shiftKey) {
+        if (isTextEditingTarget(e.target)) return
         e.preventDefault()
         dispatchViewerCommand('selectAll')
       }

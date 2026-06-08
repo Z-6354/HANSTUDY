@@ -2,6 +2,8 @@ import { ZoomIn, ZoomOut } from 'lucide-react'
 import * as pdfjsLib from 'pdfjs-dist'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toUint8Array } from '@shared/binary'
+import type { ReadingProgress } from '@shared/readingProgress'
+import type { WorkbenchMode } from '@shared/types'
 import { IconButton } from '../../../components/IconButton'
 import { SelectionToolbar } from '../selection/SelectionToolbar'
 import {
@@ -10,6 +12,7 @@ import {
 } from '../selection/useDomTextSelection'
 import { useDomFind } from '../find/useDomFind'
 import { useViewerCommand } from '../find/useViewerCommand'
+import { useReaderNavigate } from '../navigation/useReaderNavigate'
 import { selectAllInElement } from '../find/domFind'
 import { resetPageZoom } from '../../../utils/pageZoomReset'
 import { useWorkspaceStore } from '../../../stores/workspaceStore'
@@ -23,15 +26,19 @@ import {
   markSlotNeedsRerender,
   renderPdfPage,
   resizeSlotToScale,
+  slotHasStretchedCanvas,
   type PdfPageSlot
 } from './pdfLazyRender'
 import {
   applyWheelZoom,
   clampPdfScale,
   computeZoomFocalScroll,
+  isZoomPreviewing,
   LAZY_ROOT_MARGIN,
   MAX_CONCURRENT_PAGE_RENDERS,
   normalizeWheelDelta,
+  previewScaleRatio,
+  SCALE_COMMIT_DEBOUNCE_MS,
   scrollContainerToChild,
   WHEEL_ZOOM_STEP
 } from './pdfViewerPerf'
@@ -45,12 +52,34 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url
 ).toString()
 
+function savedPdfScale(
+  saved: ReadingProgress | null | undefined,
+  slot: WorkbenchMode
+): number | undefined {
+  if (slot === 'compose') {
+    return saved?.pdfScaleCompose ?? saved?.pdfScale
+  }
+  return saved?.pdfScale
+}
+
+function pdfScaleProgressPatch(
+  slot: WorkbenchMode,
+  scale: number
+): Pick<ReadingProgress, 'pdfScale' | 'pdfScaleCompose'> {
+  return slot === 'compose' ? { pdfScaleCompose: scale } : { pdfScale: scale }
+}
+
 interface PdfViewerProps {
   filePath: string
   isActive?: boolean
+  viewerSlot?: WorkbenchMode
 }
 
-export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.Element {
+export function PdfViewer({
+  filePath,
+  isActive = true,
+  viewerSlot = 'browse'
+}: PdfViewerProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const shellRef = useRef<HTMLDivElement>(null)
   const pagesRootRef = useRef<HTMLDivElement | null>(null)
@@ -75,6 +104,8 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
   const isRescalingRef = useRef(false)
   const pendingNavigatePageRef = useRef<number | null>(null)
   const suppressFocalScrollRef = useRef(false)
+  /** 预览缩放已调整 scroll，高清提交时按 scroll 比例保留，避免 focal 二次放大 */
+  const commitFromPreviewRef = useRef(false)
   const thumbOpenRef = useRef(false)
   const outlineOpenRef = useRef(false)
   const edgeCommitRafRef = useRef<number | null>(null)
@@ -192,11 +223,39 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
     }
   }, [ensurePageRendered])
 
+  const invalidateStretchedPreviewSlots = useCallback((): void => {
+    pageSlotsRef.current.forEach((slot) => {
+      if (slotHasStretchedCanvas(slot)) {
+        markSlotNeedsRerender(slot)
+      }
+    })
+  }, [])
+
+  /** 从隐藏槽切到可见时，强制重绘视口内页面（避免 canvas 在 visibility:hidden 下空白） */
+  const refreshVisiblePagesOnActivate = useCallback((): void => {
+    const container = containerRef.current
+    if (!container) return
+    pageSlotsRef.current.forEach((slot, pageNo) => {
+      if (!isPageNearViewport(slot.wrap, container, 320)) return
+      if (slot.rendered || slotHasStretchedCanvas(slot)) {
+        markSlotNeedsRerender(slot)
+      }
+    })
+    renderWaitQueueRef.current = []
+  }, [])
+
+  const prevActiveRef = useRef(isActive)
+  const needsActivateSyncRef = useRef(false)
+
   const queuePageRender = useCallback(
     (pageNo: number): void => {
       if (!isActiveRef.current || isZoomPreviewRef.current) return
       const slot = pageSlotsRef.current.get(pageNo)
-      if (!slot || slot.rendered || slot.rendering) return
+      if (!slot || slot.rendering) return
+      if (slotHasStretchedCanvas(slot)) {
+        markSlotNeedsRerender(slot)
+      }
+      if (slot.rendered) return
       if (renderWaitQueueRef.current.includes(pageNo)) return
       renderWaitQueueRef.current.push(pageNo)
       pumpRenderQueue()
@@ -245,8 +304,52 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
     requestAnimationFrame(tick)
   }, [])
 
+  const clearPagesRootPreviewTransform = useCallback((): void => {
+    const root = pagesRootRef.current
+    if (!root) return
+    root.style.transform = ''
+    root.style.transformOrigin = ''
+  }, [])
+
+  /** 用 slot 尺寸 + 画布拉伸代替高清重绘，滚轮连续缩放时保持流畅 */
+  const applyPreviewLayoutScale = useCallback((targetDisplay: number, prevDisplay: number): void => {
+    const container = containerRef.current
+    if (!container) return
+    const committed = laidOutScaleRef.current ?? scaleRef.current
+    if (Math.abs(targetDisplay - committed) < 0.001) {
+      for (const slot of Array.from(pageSlotsRef.current.values())) {
+        resizeSlotToScale(slot, committed)
+        fitStaleCanvasToSlot(slot, committed, committed)
+      }
+      return
+    }
+    const containerRect = container.getBoundingClientRect()
+    const focal = zoomFocalRef.current ?? {
+      clientX: containerRect.left + containerRect.width / 2,
+      clientY: containerRect.top + containerRect.height / 2
+    }
+    const scaleFactor = Math.abs(prevDisplay) > 0.001 ? targetDisplay / prevDisplay : 1
+    for (const slot of Array.from(pageSlotsRef.current.values())) {
+      resizeSlotToScale(slot, targetDisplay)
+      fitStaleCanvasToSlot(slot, targetDisplay, committed)
+    }
+    if (Math.abs(scaleFactor - 1) > 0.001) {
+      const nextScroll = computeZoomFocalScroll({
+        scrollLeft: container.scrollLeft,
+        scrollTop: container.scrollTop,
+        containerRect,
+        focalClientX: focal.clientX,
+        focalClientY: focal.clientY,
+        scaleFactor
+      })
+      container.scrollLeft = nextScroll.scrollLeft
+      container.scrollTop = nextScroll.scrollTop
+    }
+  }, [])
+
   const flushZoomPreview = useCallback((): void => {
     if (!isZoomPreviewRef.current && scaleCommitTimerRef.current == null) return
+    const fromPreview = isZoomPreviewRef.current || scaleCommitTimerRef.current != null
     if (scaleCommitTimerRef.current) {
       clearTimeout(scaleCommitTimerRef.current)
       scaleCommitTimerRef.current = null
@@ -254,11 +357,13 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
     isZoomPreviewRef.current = false
     const committed = clampPdfScale(displayScaleRef.current)
     displayScaleRef.current = committed
+    clearPagesRootPreviewTransform()
     setDisplayScale(committed)
     if (Math.abs(committed - scaleRef.current) > 0.001) {
+      commitFromPreviewRef.current = fromPreview
       setScale(committed)
     }
-  }, [])
+  }, [clearPagesRootPreviewTransform])
 
   /** 左侧目录展开前提交未完成缩放，避免与 width 动画叠加 */
   const commitZoomBeforeSidePanel = useCallback((): void => {
@@ -278,6 +383,7 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
     suppressFocalScrollRef.current = true
     const committed = clampPdfScale(displayScaleRef.current)
     displayScaleRef.current = committed
+    clearPagesRootPreviewTransform()
     setDisplayScale(committed)
     if (Math.abs(committed - scaleRef.current) > 0.001) {
       setScale(committed)
@@ -285,7 +391,7 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
       suppressFocalScrollRef.current = false
     }
     resetPageZoom()
-  }, [])
+  }, [clearPagesRootPreviewTransform])
 
   const openSidePanelSafely = useCallback(
     (open: () => void): void => {
@@ -343,7 +449,7 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
             saveProgress({
               pdfPage: pageNo,
               pdfScrollRatio: root.scrollTop / max,
-              pdfScale: scaleRef.current
+              ...pdfScaleProgressPatch(viewerSlot, scaleRef.current)
             })
           }
         }
@@ -361,7 +467,7 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
         applyScroll()
       })()
     },
-    [queuePageRender, ensurePageRendered, saveProgress, isRestoringRef]
+    [queuePageRender, ensurePageRendered, saveProgress, isRestoringRef, viewerSlot]
   )
 
   const tryRunPendingNavigation = useCallback((): void => {
@@ -387,29 +493,96 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
     [pageCount, commitZoomBeforeSidePanel, tryRunPendingNavigation]
   )
 
+  useReaderNavigate(isActive, (anchor) => {
+    if (anchor.pdfPage != null && anchor.pdfPage > 0) {
+      scrollToPage(anchor.pdfPage)
+      return
+    }
+    const container = containerRef.current
+    if (container && anchor.pdfScrollRatio != null) {
+      const max = container.scrollHeight - container.clientHeight
+      container.scrollTop = anchor.pdfScrollRatio * Math.max(0, max)
+    }
+  })
+
+  const applySavedScrollPosition = useCallback(
+    (saved: ReadingProgress): void => {
+      const container = containerRef.current
+      if (!container) return
+      isRestoringRef.current = true
+      if (saved.pdfScrollRatio != null) {
+        const maxScroll = container.scrollHeight - container.clientHeight
+        container.scrollTop = saved.pdfScrollRatio * Math.max(0, maxScroll)
+      } else if (saved.pdfPage != null && saved.pdfPage > 0) {
+        scrollToPage(saved.pdfPage)
+      }
+      isRestoringRef.current = false
+    },
+    [scrollToPage, isRestoringRef]
+  )
+
   const storeZoomFocal = useCallback((clientX: number, clientY: number): void => {
     zoomFocalRef.current = { clientX, clientY }
   }, [])
 
-  /** 滚轮缩放：立即提交 layout scale（无 debounce / 无 CSS transform 预览） */
-  const scheduleScaleCommit = useCallback((nextDisplay: number): void => {
-    const clamped = clampPdfScale(nextDisplay)
-    if (scaleCommitTimerRef.current) {
-      clearTimeout(scaleCommitTimerRef.current)
-      scaleCommitTimerRef.current = null
-    }
-    isZoomPreviewRef.current = false
-    displayScaleRef.current = clamped
-    setDisplayScale(clamped)
-    if (Math.abs(clamped - scaleRef.current) <= 0.001) return
+  /** 滚轮缩放：连续滚动时低清预览，停止后再提交 layout scale 并高清重绘 */
+  const scheduleScaleCommit = useCallback(
+    (nextDisplay: number): void => {
+      const clamped = clampPdfScale(nextDisplay)
+      if (scaleCommitTimerRef.current) {
+        clearTimeout(scaleCommitTimerRef.current)
+        scaleCommitTimerRef.current = null
+      }
 
-    renderWaitQueueRef.current = []
-    if (thumbOpenRef.current || outlineOpenRef.current) {
-      suppressFocalScrollRef.current = true
-    }
-    setScale(clamped)
-    requestAnimationFrame(() => resetPageZoom())
-  }, [])
+      const panelOpen = thumbOpenRef.current || outlineOpenRef.current
+      if (panelOpen) {
+        isZoomPreviewRef.current = false
+        suppressFocalScrollRef.current = true
+        displayScaleRef.current = clamped
+        clearPagesRootPreviewTransform()
+        setDisplayScale(clamped)
+        if (Math.abs(clamped - scaleRef.current) > 0.001) {
+          setScale(clamped)
+        } else {
+          suppressFocalScrollRef.current = false
+        }
+        requestAnimationFrame(() => resetPageZoom())
+        return
+      }
+
+      const prevDisplay = displayScaleRef.current
+      setDisplayScale(clamped)
+      displayScaleRef.current = clamped
+      const previewing = isZoomPreviewing(clamped, scaleRef.current)
+      isZoomPreviewRef.current = previewing
+      if (previewing) {
+        applyPreviewLayoutScale(clamped, prevDisplay)
+        renderWaitQueueRef.current = []
+      } else if (Math.abs(clamped - scaleRef.current) <= 0.001) {
+        isZoomPreviewRef.current = false
+        if (Math.abs(prevDisplay - clamped) > 0.001) {
+          applyPreviewLayoutScale(clamped, prevDisplay)
+          invalidateStretchedPreviewSlots()
+          requestAnimationFrame(() => bootstrapVisiblePagesRef.current())
+        }
+        return
+      }
+
+      scaleCommitTimerRef.current = setTimeout(() => {
+        scaleCommitTimerRef.current = null
+        commitFromPreviewRef.current =
+          Math.abs(displayScaleRef.current - scaleRef.current) > 0.001
+        isZoomPreviewRef.current = false
+        clearPagesRootPreviewTransform()
+        if (thumbOpenRef.current || outlineOpenRef.current) {
+          suppressFocalScrollRef.current = true
+        }
+        setScale(displayScaleRef.current)
+        requestAnimationFrame(() => resetPageZoom())
+      }, SCALE_COMMIT_DEBOUNCE_MS)
+    },
+    [applyPreviewLayoutScale, clearPagesRootPreviewTransform, invalidateStretchedPreviewSlots]
+  )
 
   const adjustZoom = useCallback(
     (delta: number): void => {
@@ -464,8 +637,8 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
 
   useEffect(() => {
     if (!layoutReady || isRestoringRef.current) return
-    saveProgress({ pdfScale: scale, pdfPage: currentPage })
-  }, [scale, currentPage, layoutReady, saveProgress, isRestoringRef])
+    saveProgress({ ...pdfScaleProgressPatch(viewerSlot, scale), pdfPage: currentPage })
+  }, [scale, currentPage, layoutReady, saveProgress, isRestoringRef, viewerSlot])
 
   useEffect(() => {
     let cancelled = false
@@ -490,8 +663,9 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
         if (cancelled) return
         const saved = await window.api.readingProgress.get(filePath)
         if (cancelled) return
-        if (saved?.pdfScale != null) {
-          const next = clampPdfScale(saved.pdfScale)
+        const initialScale = savedPdfScale(saved, viewerSlot)
+        if (initialScale != null) {
+          const next = clampPdfScale(initialScale)
           setScale(next)
           setDisplayScale(next)
           scaleRef.current = next
@@ -540,18 +714,60 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
       void pdfDocRef.current?.destroy()
       pdfDocRef.current = null
     }
-  }, [filePath, clearPageSlots, bumpRenderGeneration])
+  }, [filePath, clearPageSlots, bumpRenderGeneration, viewerSlot])
+
+  useEffect(() => {
+    if (isActive && !prevActiveRef.current) {
+      needsActivateSyncRef.current = true
+    }
+    prevActiveRef.current = isActive
+  }, [isActive])
 
   useEffect(() => {
     if (isActive) {
-      if (layoutReady) {
-        requestAnimationFrame(() => bootstrapVisiblePagesRef.current())
+      if (scaleCommitTimerRef.current != null || isZoomPreviewRef.current) {
+        flushZoomPreview()
       }
+      if (!layoutReady) return
+
+      const runActivateSession = (): void => {
+        refreshVisiblePagesOnActivate()
+        if (needsActivateSyncRef.current) {
+          needsActivateSyncRef.current = false
+          void loadProgress().then((saved) => {
+            if (!saved || !isActiveRef.current) {
+              bootstrapVisiblePagesRef.current()
+              return
+            }
+            applySavedScrollPosition(saved)
+            requestAnimationFrame(() => bootstrapVisiblePagesRef.current())
+          })
+          return
+        }
+        bootstrapVisiblePagesRef.current()
+      }
+
+      requestAnimationFrame(() => runActivateSession())
       return
     }
+    if (scaleCommitTimerRef.current != null) {
+      clearTimeout(scaleCommitTimerRef.current)
+      scaleCommitTimerRef.current = null
+    }
+    isZoomPreviewRef.current = false
     bumpRenderGeneration()
     renderWaitQueueRef.current = []
-  }, [isActive, layoutReady, bumpRenderGeneration])
+    invalidateStretchedPreviewSlots()
+  }, [
+    isActive,
+    layoutReady,
+    bumpRenderGeneration,
+    flushZoomPreview,
+    invalidateStretchedPreviewSlots,
+    refreshVisiblePagesOnActivate,
+    loadProgress,
+    applySavedScrollPosition
+  ])
 
   useEffect(() => {
     const pdf = pdfDocRef.current
@@ -633,6 +849,14 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
       container.scrollHeight > container.clientHeight
         ? container.scrollTop / (container.scrollHeight - container.clientHeight)
         : 0
+    const scrollLeftBefore = container.scrollLeft
+    /** 预览阶段已对齐 scroll + slot 尺寸，高清提交只换画布不重算滚动 */
+    const skipScrollForPreviewCommit = commitFromPreviewRef.current
+    if (commitFromPreviewRef.current) {
+      commitFromPreviewRef.current = false
+    }
+
+    clearPagesRootPreviewTransform()
 
     for (const slot of Array.from(pageSlotsRef.current.values())) {
       markSlotNeedsRerender(slot)
@@ -653,10 +877,11 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
     requestAnimationFrame(() => {
       if (cancelled) return
       const pendingNav = pendingNavigatePageRef.current
-      if (pendingNav == null) {
+      if (pendingNav == null && !skipScrollForPreviewCommit) {
         if (suppressFocalScrollRef.current) {
           const maxScroll = container.scrollHeight - container.clientHeight
           container.scrollTop = scrollRatioBefore * Math.max(0, maxScroll)
+          container.scrollLeft = scrollLeftBefore
         } else {
           const nextScroll = computeZoomFocalScroll({
             scrollLeft: container.scrollLeft,
@@ -683,7 +908,7 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
       isRescalingRef.current = false
       setIsRescaling(false)
     }
-  }, [scale, layoutReady, bumpRenderGeneration])
+  }, [scale, layoutReady, bumpRenderGeneration, clearPagesRootPreviewTransform])
 
   useEffect(() => {
     const container = containerRef.current
@@ -706,6 +931,27 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
 
     return () => observer.disconnect()
   }, [layoutReady, isActive])
+
+  /** 笔记模式分屏后左侧阅读区宽度变化，需重新 bootstrap 可见页 */
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container || !layoutReady || !isActive) return
+
+    let raf = 0
+    const ro = new ResizeObserver(() => {
+      if (isRestoringRef.current || isZoomPreviewRef.current || isRescalingRef.current) return
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => {
+        refreshVisiblePagesOnActivate()
+        bootstrapVisiblePagesRef.current()
+      })
+    })
+    ro.observe(container)
+    return () => {
+      ro.disconnect()
+      cancelAnimationFrame(raf)
+    }
+  }, [layoutReady, isActive, refreshVisiblePagesOnActivate])
 
   useEffect(() => {
     if (!layoutReady) return
@@ -779,7 +1025,7 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
           saveProgress({
             pdfScrollRatio: ratio,
             pdfPage: currentPageRef.current,
-            pdfScale: scaleRef.current
+            ...pdfScaleProgressPatch(viewerSlot, scaleRef.current)
           })
         }
       })
@@ -791,7 +1037,7 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
       container.removeEventListener('scroll', handleScroll)
       if (scrollRafRef.current != null) cancelAnimationFrame(scrollRafRef.current)
     }
-  }, [layoutReady, saveProgress, isRestoringRef])
+  }, [layoutReady, saveProgress, isRestoringRef, viewerSlot])
 
   useEffect(() => {
     const handleWheel = (e: WheelEvent): void => {
@@ -827,6 +1073,10 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
     return () => {
       el.removeEventListener('wheel', handleWheel)
       if (wheelRafRef.current != null) cancelAnimationFrame(wheelRafRef.current)
+      if (scaleCommitTimerRef.current != null) {
+        clearTimeout(scaleCommitTimerRef.current)
+        scaleCommitTimerRef.current = null
+      }
     }
   }, [scheduleScaleCommit, storeZoomFocal, layoutReady])
 
@@ -838,6 +1088,9 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
 
   const showViewer = !loading && !error && pageCount > 0 && layoutReady
   const showLoading = loading || (pageCount > 0 && !layoutReady)
+  const sidePanelOpen = thumbOpen || outlineOpen
+  const isPreviewingZoom =
+    previewScaleRatio(displayScale, scale) !== 1 && !sidePanelOpen && !isRescaling
 
   return (
     <div ref={wrapperRef} className="pdf-wrapper">
@@ -848,8 +1101,11 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
         <span style={{ marginLeft: 16 }}>
           第 {currentPage} / {pageCount} 页
         </span>
-        {pageCount > 0 && renderedCount < pageCount && !isRescaling && (
+        {pageCount > 0 && renderedCount < pageCount && !isRescaling && !isPreviewingZoom && (
           <span className="pdf-render-progress">高清渲染 {renderedCount}/{pageCount}</span>
+        )}
+        {isPreviewingZoom && (
+          <span className="pdf-render-progress">缩放预览</span>
         )}
         {isRescaling && (
           <span className="pdf-render-progress">缩放重绘中…</span>
@@ -861,9 +1117,14 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
 
       <div
         ref={shellRef}
-        className="pdf-viewer-shell"
-        style={{ display: showViewer ? 'flex' : 'none' }}
+        className={`pdf-viewer-shell${showViewer ? '' : ' pdf-viewer-shell--hidden'}`}
       >
+        <div ref={containerRef} className={`pdf-viewer${isRescaling ? ' pdf-rescaling' : ''}`}>
+          <div ref={pagesRootRef} className="pdf-pages-root">
+            <div ref={pagesContentRef} className="pdf-pages-content" />
+          </div>
+        </div>
+
         <PdfSideHover
           side="left"
           open={outlineOpen}
@@ -878,12 +1139,6 @@ export function PdfViewer({ filePath, isActive = true }: PdfViewerProps): JSX.El
             onNavigate={scrollToPage}
           />
         </PdfSideHover>
-
-        <div ref={containerRef} className={`pdf-viewer${isRescaling ? ' pdf-rescaling' : ''}`}>
-          <div ref={pagesRootRef} className="pdf-pages-root">
-            <div ref={pagesContentRef} className="pdf-pages-content" />
-          </div>
-        </div>
 
         <PdfSideHover
           side="right"

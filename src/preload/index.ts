@@ -110,6 +110,37 @@ const api = {
     rename: (targetPath: string, newName: string): Promise<string> =>
       ipcRenderer.invoke(IPC.notes.rename, targetPath, newName)
   },
+  documentNotes: {
+    get: (
+      docPath: string
+    ): Promise<import('../shared/documentNotes').DocumentNoteThread | null> =>
+      ipcRenderer.invoke(IPC.documentNotes.get, docPath),
+    save: (thread: import('../shared/documentNotes').DocumentNoteThread): Promise<boolean> =>
+      ipcRenderer.invoke(IPC.documentNotes.save, thread)
+  },
+  notebooks: {
+    list: (): Promise<import('../shared/notebooks').NotebooksIndex> =>
+      ipcRenderer.invoke(IPC.notebooks.list),
+    get: (id: string): Promise<import('../shared/notebooks').Notebook | null> =>
+      ipcRenderer.invoke(IPC.notebooks.get, id),
+    save: (notebook: import('../shared/notebooks').Notebook): Promise<boolean> =>
+      ipcRenderer.invoke(IPC.notebooks.save, notebook),
+    create: (
+      input: import('../shared/notebooks').CreateNotebookInput
+    ): Promise<import('../shared/notebooks').Notebook> =>
+      ipcRenderer.invoke(IPC.notebooks.create, input),
+    delete: (id: string): Promise<boolean> => ipcRenderer.invoke(IPC.notebooks.delete, id),
+    linkDoc: (
+      notebookId: string,
+      docPath: string
+    ): Promise<import('../shared/notebooks').Notebook> =>
+      ipcRenderer.invoke(IPC.notebooks.linkDoc, notebookId, docPath),
+    importLegacy: (
+      notebookId: string,
+      docPath: string
+    ): Promise<import('../shared/notebooks').Notebook | null> =>
+      ipcRenderer.invoke(IPC.notebooks.importLegacy, notebookId, docPath)
+  },
   settings: {
     get: (): Promise<AISettings> => ipcRenderer.invoke('settings:get'),
     getRaw: (): Promise<AISettings> => ipcRenderer.invoke('settings:getRaw'),

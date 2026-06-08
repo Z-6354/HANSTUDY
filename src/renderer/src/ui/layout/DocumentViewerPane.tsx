@@ -1,3 +1,4 @@
+import type { WorkbenchMode } from '@shared/types'
 import type { OpenDocument } from '../../stores/workspaceStore'
 import { SettingsPage } from '../../features/settings/SettingsPage'
 import { DocxViewer } from '../../features/reader/viewers/DocxViewer'
@@ -9,6 +10,7 @@ import { WebViewer } from '../../features/reader/viewers/WebViewer'
 interface DocumentViewerPaneProps {
   doc: OpenDocument
   isActive: boolean
+  viewerSlot?: WorkbenchMode
 }
 
 /**
@@ -16,7 +18,11 @@ interface DocumentViewerPaneProps {
  * 关闭标签或退出应用时 React 卸载组件并释放资源。
  * 非激活标签仅隐藏（CSS），不销毁实例。
  */
-export function DocumentViewerPane({ doc, isActive }: DocumentViewerPaneProps): JSX.Element {
+export function DocumentViewerPane({
+  doc,
+  isActive,
+  viewerSlot = 'browse'
+}: DocumentViewerPaneProps): JSX.Element {
   if (doc.type === 'settings') {
     return (
       <div className={`viewer-pane ${isActive ? 'active' : ''}`} aria-hidden={!isActive}>
@@ -35,11 +41,11 @@ export function DocumentViewerPane({ doc, isActive }: DocumentViewerPaneProps): 
 
   const viewer =
     doc.type === 'pdf' ? (
-      <PdfViewer filePath={doc.path} isActive={isActive} />
+      <PdfViewer filePath={doc.path} isActive={isActive} viewerSlot={viewerSlot} />
     ) : doc.type === 'md' ? (
       <MdViewer filePath={doc.path} isActive={isActive} />
     ) : doc.type === 'txt' ? (
-      <TxtViewer filePath={doc.path} isActive={isActive} />
+      <TxtViewer filePath={doc.path} isActive={isActive} viewerSlot={viewerSlot} />
     ) : doc.type === 'docx' ? (
       <DocxViewer filePath={doc.path} isActive={isActive} />
     ) : (

@@ -12,6 +12,8 @@ import {
 import { useDomFind } from '../find/useDomFind'
 import { useViewerCommand } from '../find/useViewerCommand'
 import { selectAllInElement } from '../find/domFind'
+import { useReaderNavigate } from '../navigation/useReaderNavigate'
+import { useReadingProgress } from '../../../hooks/useReadingProgress'
 import { useWorkspaceStore } from '../../../stores/workspaceStore'
 import { TextDocumentShell } from './TextDocumentShell'
 import { useLazyTextFile } from './useLazyTextFile'
@@ -67,11 +69,21 @@ export function MdViewer({ filePath, isActive = true }: MdViewerProps): JSX.Elem
   const [monacoMounted, setMonacoMounted] = useState(false)
 
   const previewRef = useRef<HTMLDivElement>(null)
+  const previewHostRef = useRef<HTMLDivElement>(null)
   const editorRef = useMonacoEditorDispose()
   const sourceSurfaceRef = useRef<HTMLElement | null>(null)
+  const viewModeRef = useRef(viewMode)
+  viewModeRef.current = viewMode
+  const pendingNavRef = useRef<{
+    line?: number
+    scrollRatio?: number
+    mode?: MdViewMode
+  } | null>(null)
   const { containerRef: editorContainerRef, height: monacoHeight } = useMonacoHeight()
 
   const { sendToAI, setSelection, closeFindBar } = useWorkspaceStore()
+  const { saveProgress, loadProgress, isRestoringRef } = useReadingProgress(filePath, isActive)
+  const progressRestoredRef = useRef(false)
 
   const outlineItems = useDeferredOutline(
     content,
@@ -103,6 +115,7 @@ export function MdViewer({ filePath, isActive = true }: MdViewerProps): JSX.Elem
   useEffect(() => {
     setViewMode(loadViewMode(filePath))
     setCurrentLine(1)
+    progressRestoredRef.current = false
   }, [filePath])
 
   useEffect(() => {
@@ -112,6 +125,7 @@ export function MdViewer({ filePath, isActive = true }: MdViewerProps): JSX.Elem
         setViewMode((mode) => {
           const next = mode === 'preview' ? 'source' : 'preview'
           saveViewMode(filePath, next)
+          saveProgress({ mdViewMode: next })
           return next
         })
         setToolbarRect(null)
@@ -120,7 +134,7 @@ export function MdViewer({ filePath, isActive = true }: MdViewerProps): JSX.Elem
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [filePath])
+  }, [filePath, saveProgress])
 
   useDomFind(previewRef.current, isActive && viewMode === 'preview')
 
@@ -151,24 +165,135 @@ export function MdViewer({ filePath, isActive = true }: MdViewerProps): JSX.Elem
   const switchMode = (mode: MdViewMode): void => {
     setViewMode(mode)
     saveViewMode(filePath, mode)
+    saveProgress({ mdViewMode: mode })
     closeToolbar()
   }
 
-  const navigateToLine = useCallback(
-    (line: number): void => {
-      setCurrentLine(line)
-      if (viewMode === 'preview') {
+  const navigateToLine = useCallback((line: number, mode: MdViewMode = viewModeRef.current): void => {
+    setCurrentLine(line)
+    if (mode === 'preview') {
+      requestAnimationFrame(() => {
         const target = previewRef.current?.querySelector<HTMLElement>(`#outline-line-${line}`)
         if (target) scrollElementIntoScrollParent(target, 16)
-      } else {
+      })
+    } else {
+      requestAnimationFrame(() => {
         const editor = editorRef.current
         editor?.revealLineInCenter(line)
         editor?.setPosition({ lineNumber: line, column: 1 })
         editor?.focus()
+      })
+    }
+  }, [])
+
+  const applyPendingNavigate = useCallback((): void => {
+    const pending = pendingNavRef.current
+    if (!pending) return
+    if (pending.mode === 'source' && !monacoMounted) return
+    pendingNavRef.current = null
+    if (pending.line != null && pending.line > 0) {
+      navigateToLine(pending.line, pending.mode ?? viewModeRef.current)
+    }
+    if (pending.scrollRatio != null && (pending.mode ?? viewModeRef.current) === 'preview') {
+      requestAnimationFrame(() => {
+        const el = previewHostRef.current
+        if (!el) return
+        const max = el.scrollHeight - el.clientHeight
+        el.scrollTop = pending.scrollRatio! * Math.max(0, max)
+      })
+    }
+  }, [monacoMounted, navigateToLine])
+
+  useEffect(() => {
+    applyPendingNavigate()
+  }, [applyPendingNavigate, monacoMounted, viewMode])
+
+  useReaderNavigate(isActive, (anchor) => {
+    if (anchor.docType !== 'md') return
+    const targetMode = anchor.mdViewMode ?? viewModeRef.current
+    if (targetMode !== viewModeRef.current) {
+      pendingNavRef.current = {
+        line: anchor.monacoLine,
+        scrollRatio: anchor.scrollRatio,
+        mode: targetMode
       }
-    },
-    [viewMode]
-  )
+      setViewMode(targetMode)
+      saveViewMode(filePath, targetMode)
+      return
+    }
+    if (anchor.monacoLine != null && anchor.monacoLine > 0) {
+      navigateToLine(anchor.monacoLine, targetMode)
+      return
+    }
+    if (anchor.scrollRatio != null) {
+      requestAnimationFrame(() => {
+        const el = previewHostRef.current
+        if (!el) return
+        const max = el.scrollHeight - el.clientHeight
+        el.scrollTop = anchor.scrollRatio! * Math.max(0, max)
+      })
+    }
+  })
+
+  useEffect(() => {
+    if (!isActive || loading || !content || progressRestoredRef.current) return
+    let cancelled = false
+    void loadProgress().then((saved) => {
+      if (cancelled || !saved) {
+        progressRestoredRef.current = true
+        return
+      }
+      isRestoringRef.current = true
+      const restoredMode = saved.mdViewMode ?? loadViewMode(filePath)
+      if (restoredMode !== viewModeRef.current) {
+        setViewMode(restoredMode)
+        saveViewMode(filePath, restoredMode)
+      }
+      if (saved.monacoLine != null && saved.monacoLine > 0) {
+        setCurrentLine(saved.monacoLine)
+      }
+      requestAnimationFrame(() => {
+        if (cancelled) return
+        if (saved.monacoLine != null && saved.monacoLine > 0) {
+          navigateToLine(saved.monacoLine, restoredMode)
+        }
+        if (saved.scrollRatio != null && previewHostRef.current && restoredMode === 'preview') {
+          const el = previewHostRef.current
+          const max = el.scrollHeight - el.clientHeight
+          el.scrollTop = saved.scrollRatio * Math.max(0, max)
+        }
+        isRestoringRef.current = false
+        progressRestoredRef.current = true
+      })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [content, filePath, isActive, isRestoringRef, loadProgress, loading, navigateToLine])
+
+  useEffect(() => {
+    if (!isActive || loading || isRestoringRef.current) return
+    saveProgress({ monacoLine: currentLine, mdViewMode: viewMode })
+  }, [currentLine, isActive, loading, saveProgress, viewMode])
+
+  useEffect(() => {
+    const el = previewHostRef.current
+    if (!el || viewMode !== 'preview' || !isActive) return
+
+    const onScroll = (): void => {
+      if (isRestoringRef.current) return
+      const max = el.scrollHeight - el.clientHeight
+      const ratio = max > 0 ? el.scrollTop / max : 0
+      saveProgress({
+        scrollRatio: ratio,
+        monacoLine: currentLine,
+        mdViewMode: 'preview'
+      })
+    }
+
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [currentLine, isActive, isRestoringRef, saveProgress, viewMode])
 
   const handleEditorMount = useCallback(
     (editor: MonacoEditor.IStandaloneCodeEditor, monaco: typeof MonacoApi): void => {
@@ -179,10 +304,17 @@ export function MdViewer({ filePath, isActive = true }: MdViewerProps): JSX.Elem
       closeFindBar()
 
       editor.onDidChangeCursorPosition((e) => {
-        setCurrentLine(e.position.lineNumber)
+        if (isRestoringRef.current) return
+        const line = e.position.lineNumber
+        setCurrentLine(line)
+        saveProgress({
+          monacoLine: line,
+          monacoColumn: e.position.column,
+          mdViewMode: 'source'
+        })
       })
     },
-    [closeFindBar]
+    [closeFindBar, saveProgress]
   )
 
   if (loading) {
@@ -235,7 +367,7 @@ export function MdViewer({ filePath, isActive = true }: MdViewerProps): JSX.Elem
         saveHint={saveHint}
       >
         {viewMode === 'preview' ? (
-          <div className="markdown-preview-host">
+          <div ref={previewHostRef} className="markdown-preview-host">
             <div
               ref={previewRef}
               className="markdown-preview"

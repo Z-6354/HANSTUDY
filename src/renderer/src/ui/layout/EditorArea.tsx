@@ -2,12 +2,14 @@ import { useCallback, useEffect } from 'react'
 import { Allotment } from 'allotment'
 import { FilePlus, FolderOpen } from 'lucide-react'
 import { IconButton } from '../../components/IconButton'
-import { NoteEditor } from '../../features/notes/NoteEditor'
+import { DocumentNotePanel } from '../../features/notes/DocumentNotePanel'
 import { DocumentFindBar } from '../../features/reader/find/DocumentFindBar'
-import { useWorkspaceStore, SETTINGS_DOC_PATH } from '../../stores/workspaceStore'
+import { useWorkspaceStore } from '../../stores/workspaceStore'
+import type { WorkbenchMode } from '@shared/types'
 import { DocumentViewerPane } from './DocumentViewerPane'
 import { GlobalSearchBar } from './GlobalSearchBar'
 import { TabBar } from './TabBar'
+import { WorkbenchModeBar } from './WorkbenchModeBar'
 
 export function EditorArea(): JSX.Element {
   const {
@@ -18,7 +20,6 @@ export function EditorArea(): JSX.Element {
     setActiveDocument,
     showTabBar,
     workbenchMode,
-    activeNotePath
   } = useWorkspaceStore()
 
   const activeDoc = documents.find((d) => d.id === activeDocumentId)
@@ -50,38 +51,52 @@ export function EditorArea(): JSX.Element {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [activeDocumentId, closeDocument, documents, setActiveDocument])
 
-  const viewerPanes =
-    documents.length === 0 ? (
-      <div className="empty-state">
-        <h2>欢迎使用 HAN Study Reader</h2>
-        <p>打开文档阅读，或在侧栏「笔记」中记笔记</p>
-        <p className="empty-state-hint">记笔记模式下，左侧编辑笔记、右侧参考文档</p>
-        <div className="actions actions-icon-row">
-          <IconButton
-            icon={FilePlus}
-            label="打开文件"
-            size={20}
-            className="empty-action-btn"
-            onClick={() => void handleOpenFile()}
-          />
-          <IconButton
-            icon={FolderOpen}
-            label="打开文件夹"
-            size={20}
-            className="empty-action-btn"
-            onClick={async () => {
-              const result = await window.api.dialog.openFolder()
-              if (result) {
-                useWorkspaceStore.getState().setRootFolder(result.path, result.files)
-              }
-            }}
-          />
+  const renderViewerPanes = (slot: WorkbenchMode): JSX.Element => {
+    const slotVisible = workbenchMode === slot
+    if (documents.length === 0) {
+      return (
+        <div className="empty-state">
+          <h2>欢迎使用 HAN Study Reader</h2>
+          <p>打开文档阅读，或在侧栏「笔记」中记笔记</p>
+          <p className="empty-state-hint">
+            {workbenchMode === 'compose'
+              ? '笔记模式：左侧阅读文档，右侧按当前文档记录笔记线程'
+              : '浏览模式：全屏阅读文档；切换到笔记模式可边读边记'}
+          </p>
+          <div className="actions actions-icon-row">
+            <IconButton
+              icon={FilePlus}
+              label="打开文件"
+              size={20}
+              className="empty-action-btn"
+              onClick={() => void handleOpenFile()}
+            />
+            <IconButton
+              icon={FolderOpen}
+              label="打开文件夹"
+              size={20}
+              className="empty-action-btn"
+              onClick={async () => {
+                const result = await window.api.dialog.openFolder()
+                if (result) {
+                  useWorkspaceStore.getState().setRootFolder(result.path, result.files)
+                }
+              }}
+            />
+          </div>
         </div>
-      </div>
-    ) : (
+      )
+    }
+
+    return (
       <>
         {documents.map((doc) => (
-          <DocumentViewerPane key={doc.id} doc={doc} isActive={doc.id === activeDocumentId} />
+          <DocumentViewerPane
+            key={slot === 'compose' ? `compose:${doc.id}` : doc.id}
+            doc={doc}
+            viewerSlot={slot}
+            isActive={slotVisible && doc.id === activeDocumentId}
+          />
         ))}
         {!activeDoc && (
           <div className="empty-state">
@@ -90,33 +105,39 @@ export function EditorArea(): JSX.Element {
         )}
       </>
     )
+  }
 
-  const referencePane = (
-    <div className="viewer-container viewer-container-reference">{viewerPanes}</div>
-  )
-
-  const browsePane = <div className="viewer-container">{viewerPanes}</div>
+  const isCompose = workbenchMode === 'compose'
 
   return (
     <div className="editor-area">
       <GlobalSearchBar />
       <DocumentFindBar />
+      <WorkbenchModeBar />
       {showTabBar && <TabBar onOpenFile={() => void handleOpenFile()} />}
 
-      {workbenchMode === 'compose' ? (
-        <Allotment className="compose-split">
-          <Allotment.Pane preferredSize="45%" minSize={240}>
-            <div className="compose-note-pane">
-              <NoteEditor filePath={activeNotePath} />
+      {/* 浏览 / 笔记两模式始终挂载；笔记列 hidden 时不占宽，内容保留在内存 */}
+      <Allotment className="workbench-split">
+        <Allotment.Pane minSize={280}>
+          <div className="viewer-slot-stack">
+            <div
+              className={`viewer-slot viewer-slot-browse${workbenchMode === 'browse' ? ' active' : ''}`}
+            >
+              <div className="viewer-container">{renderViewerPanes('browse')}</div>
             </div>
-          </Allotment.Pane>
-          <Allotment.Pane minSize={280}>
-            {referencePane}
-          </Allotment.Pane>
-        </Allotment>
-      ) : (
-        browsePane
-      )}
+            <div
+              className={`viewer-slot viewer-slot-compose${isCompose ? ' active' : ''}`}
+            >
+              <div className="viewer-container">{renderViewerPanes('compose')}</div>
+            </div>
+          </div>
+        </Allotment.Pane>
+        <Allotment.Pane visible={isCompose} preferredSize="45%" minSize={240}>
+          <div className="compose-note-pane">
+            <DocumentNotePanel doc={activeDoc ?? null} />
+          </div>
+        </Allotment.Pane>
+      </Allotment>
     </div>
   )
 }

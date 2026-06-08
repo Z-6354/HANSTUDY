@@ -13,8 +13,10 @@ export interface ReadingProgress {
   pdfPage?: number
   /** PDF 滚动比例 0–1 */
   pdfScrollRatio?: number
-  /** PDF 缩放 */
+  /** PDF 缩放（浏览模式） */
   pdfScale?: number
+  /** PDF 缩放（笔记模式，可与浏览模式不同） */
+  pdfScaleCompose?: number
   /** 通用滚动像素 */
   scrollTop?: number
   /** 通用滚动比例 0–1 */

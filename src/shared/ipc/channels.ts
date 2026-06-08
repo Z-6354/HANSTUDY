@@ -54,6 +54,19 @@ export const IPC = {
     delete: 'notes:delete',
     rename: 'notes:rename'
   },
+  documentNotes: {
+    get: 'documentNotes:get',
+    save: 'documentNotes:save'
+  },
+  notebooks: {
+    list: 'notebooks:list',
+    get: 'notebooks:get',
+    save: 'notebooks:save',
+    create: 'notebooks:create',
+    delete: 'notebooks:delete',
+    linkDoc: 'notebooks:linkDoc',
+    importLegacy: 'notebooks:importLegacy'
+  },
   settings: {
     get: 'settings:get',
     getRaw: 'settings:getRaw',

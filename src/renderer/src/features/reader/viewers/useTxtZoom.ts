@@ -6,6 +6,7 @@ import {
   type RefObject
 } from 'react'
 import type { editor as MonacoEditor } from 'monaco-editor'
+import type { WorkbenchMode } from '@shared/types'
 import {
   TXT_BASE_FONT_SIZE,
   TXT_ZOOM_SAVE_DEBOUNCE_MS,
@@ -16,22 +17,28 @@ import {
 
 const ZOOM_STORAGE_KEY = 'hanstudy-txt-zoom'
 
-function loadZoom(filePath: string): number {
+function zoomStorageKey(filePath: string, slot: WorkbenchMode): string {
+  return `${slot}:${filePath}`
+}
+
+function loadZoom(filePath: string, slot: WorkbenchMode): number {
   try {
     const raw = localStorage.getItem(ZOOM_STORAGE_KEY)
     if (!raw) return 1
     const map = JSON.parse(raw) as Record<string, number>
-    return clampTxtZoom(map[filePath] ?? 1)
+    const key = zoomStorageKey(filePath, slot)
+    const legacy = map[filePath]
+    return clampTxtZoom(map[key] ?? (slot === 'browse' ? legacy : undefined) ?? 1)
   } catch {
     return 1
   }
 }
 
-function saveZoom(filePath: string, zoom: number): void {
+function saveZoom(filePath: string, slot: WorkbenchMode, zoom: number): void {
   try {
     const raw = localStorage.getItem(ZOOM_STORAGE_KEY)
     const map = raw ? (JSON.parse(raw) as Record<string, number>) : {}
-    map[filePath] = zoom
+    map[zoomStorageKey(filePath, slot)] = zoom
     localStorage.setItem(ZOOM_STORAGE_KEY, JSON.stringify(map))
   } catch {
     // ignore
@@ -40,6 +47,7 @@ function saveZoom(filePath: string, zoom: number): void {
 
 interface UseTxtZoomParams {
   filePath: string
+  viewerSlot?: WorkbenchMode
   editMode: boolean
   editorRef: MutableRefObject<MonacoEditor.IStandaloneCodeEditor | null>
   readerRef: RefObject<HTMLElement | null>
@@ -50,6 +58,7 @@ interface UseTxtZoomParams {
 
 export function useTxtZoom({
   filePath,
+  viewerSlot = 'browse',
   editMode,
   editorRef,
   readerRef,
@@ -63,7 +72,7 @@ export function useTxtZoom({
   flushPendingZoom: () => void
   initialMonacoFontSize: number
 } {
-  const zoomRef = useRef(loadZoom(filePath))
+  const zoomRef = useRef(loadZoom(filePath, viewerSlot))
   const zoomLabelRef = useRef<HTMLSpanElement | null>(null)
   const wheelRafRef = useRef<number | null>(null)
   const wheelAccumRef = useRef({ deltaY: 0, deltaMode: 0 })
@@ -71,6 +80,8 @@ export function useTxtZoom({
 
   const filePathRef = useRef(filePath)
   filePathRef.current = filePath
+  const viewerSlotRef = useRef(viewerSlot)
+  viewerSlotRef.current = viewerSlot
   const editModeRef = useRef(editMode)
   editModeRef.current = editMode
 
@@ -84,7 +95,7 @@ export function useTxtZoom({
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {
       saveTimerRef.current = null
-      saveZoom(filePathRef.current, zoomRef.current)
+      saveZoom(filePathRef.current, viewerSlotRef.current, zoomRef.current)
     }, TXT_ZOOM_SAVE_DEBOUNCE_MS)
   }, [])
 
@@ -154,11 +165,11 @@ export function useTxtZoom({
   )
 
   useEffect(() => {
-    const zoom = loadZoom(filePath)
+    const zoom = loadZoom(filePath, viewerSlot)
     zoomRef.current = zoom
     updateZoomLabel(zoom)
     applyReaderZoom(zoom)
-  }, [filePath, applyReaderZoom, updateZoomLabel])
+  }, [filePath, viewerSlot, applyReaderZoom, updateZoomLabel])
 
   useEffect(() => {
     if (editMode) {
@@ -229,6 +240,6 @@ export function useTxtZoom({
     zoomIn,
     zoomOut,
     flushPendingZoom,
-    initialMonacoFontSize: Math.round(TXT_BASE_FONT_SIZE * loadZoom(filePath))
+    initialMonacoFontSize: Math.round(TXT_BASE_FONT_SIZE * loadZoom(filePath, viewerSlot))
   }
 }

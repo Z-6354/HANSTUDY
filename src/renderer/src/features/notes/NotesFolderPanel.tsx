@@ -75,7 +75,7 @@ function NotesTreeItem({
 }
 
 export function NotesFolderPanel(): JSX.Element {
-  const { activeNotePath, setActiveNotePath, workbenchMode, setWorkbenchMode } = useWorkspaceStore()
+  const { activeNotePath, setActiveNotePath, setWorkbenchMode } = useWorkspaceStore()
   const [rootPath, setRootPath] = useState<string | null>(null)
   const [entries, setEntries] = useState<NoteEntry[]>([])
   const [refreshKey, setRefreshKey] = useState(0)
@@ -140,22 +140,6 @@ export function NotesFolderPanel(): JSX.Element {
   return (
     <div className="notes-folder-panel">
       <div className="notes-panel-toolbar">
-        <div className="notes-mode-toggle">
-          <button
-            type="button"
-            className={workbenchMode === 'compose' ? 'active' : ''}
-            onClick={() => setWorkbenchMode('compose')}
-          >
-            记笔记
-          </button>
-          <button
-            type="button"
-            className={workbenchMode === 'browse' ? 'active' : ''}
-            onClick={() => setWorkbenchMode('browse')}
-          >
-            浏览
-          </button>
-        </div>
         <div className="notes-panel-actions">
           <IconButton
             icon={FilePlus}

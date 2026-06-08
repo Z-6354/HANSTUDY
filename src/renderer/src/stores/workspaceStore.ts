@@ -3,7 +3,47 @@ import { resolveWebInput, webUrlKey } from '@shared/webCrop'
 import { webDisplayTitle } from '@shared/webLibrary'
 import { useWebLibraryStore } from './webLibraryStore'
 import { getSearchEngine, getWebBrowseLayoutPrefs } from './appSettingsStore'
+import type { DocumentNoteAnchor, NoteSortMode } from '@shared/documentNotes'
 import type { ChatMessage, TextSelectionContext, WorkbenchMode } from '../types/global.d'
+
+const NOTE_SORT_MODE_KEY = 'hanstudy-note-sort-mode'
+const ACTIVE_NOTEBOOK_KEY = 'hanstudy-active-notebook-id'
+
+function loadNoteSortMode(): NoteSortMode | null {
+  try {
+    const raw = localStorage.getItem(NOTE_SORT_MODE_KEY)
+    if (raw === 'document' || raw === 'history' || raw === 'manual') return raw
+    return null
+  } catch {
+    return null
+  }
+}
+
+function saveNoteSortMode(mode: NoteSortMode | null): void {
+  try {
+    if (mode == null) localStorage.removeItem(NOTE_SORT_MODE_KEY)
+    else localStorage.setItem(NOTE_SORT_MODE_KEY, mode)
+  } catch {
+    // ignore
+  }
+}
+
+function loadActiveNotebookId(): string | null {
+  try {
+    return localStorage.getItem(ACTIVE_NOTEBOOK_KEY)
+  } catch {
+    return null
+  }
+}
+
+function saveActiveNotebookId(id: string | null): void {
+  try {
+    if (id) localStorage.setItem(ACTIVE_NOTEBOOK_KEY, id)
+    else localStorage.removeItem(ACTIVE_NOTEBOOK_KEY)
+  } catch {
+    // ignore
+  }
+}
 
 export type DocumentType = 'txt' | 'md' | 'pdf' | 'docx' | 'web' | 'settings' | 'unknown'
 export type SidebarTab = 'explorer' | 'notes' | 'web'
@@ -79,6 +119,10 @@ interface WorkspaceState {
   viewerStatus: ViewerStatus | null
   viewerCommandSeq: number
   viewerCommand: ViewerCommand | null
+  readerNavigateSeq: number
+  readerNavigate: { seq: number; anchor: DocumentNoteAnchor } | null
+  noteSortMode: NoteSortMode | null
+  activeNotebookId: string | null
   findBarOpen: boolean
   findQuery: string
   findMatchIndex: number
@@ -126,6 +170,9 @@ interface WorkspaceState {
   setFindQuery: (query: string) => void
   setFindMatchStats: (index: number, count: number) => void
   stepFind: (forward: boolean) => void
+  dispatchReaderNavigate: (anchor: DocumentNoteAnchor) => void
+  setNoteSortMode: (mode: NoteSortMode | null) => void
+  setActiveNotebookId: (id: string | null) => void
 }
 
 const RECENT_KEY = 'hanstudy-recent-files'
@@ -183,6 +230,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   viewerStatus: null,
   viewerCommandSeq: 0,
   viewerCommand: null,
+  readerNavigateSeq: 0,
+  readerNavigate: null,
+  noteSortMode: loadNoteSortMode(),
+  activeNotebookId: loadActiveNotebookId(),
   findBarOpen: false,
   findQuery: '',
   findMatchIndex: 0,
@@ -548,5 +599,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set((state) => ({
       findStepForward: forward,
       findStepSeq: state.findStepSeq + 1
-    }))
+    })),
+
+  dispatchReaderNavigate: (anchor) => {
+    const seq = get().readerNavigateSeq + 1
+    set({
+      readerNavigate: { seq, anchor },
+      readerNavigateSeq: seq,
+      workbenchMode: 'compose'
+    })
+  },
+
+  setNoteSortMode: (mode) => {
+    saveNoteSortMode(mode)
+    set({ noteSortMode: mode })
+  },
+
+  setActiveNotebookId: (id) => {
+    saveActiveNotebookId(id)
+    set({ activeNotebookId: id, noteSortMode: null })
+  }
 }))

@@ -1,0 +1,20 @@
+export {
+  applyNoteTreeDrop,
+  collectDeleteTargets,
+  deleteEntryCascade as deleteEntry,
+  entriesForDoc,
+  getChildren,
+  getParentId,
+  entryDepth,
+  insertEntryAfter,
+  insertEntryAsChild,
+  migrateDepthToParentId,
+  moveEntryAfterSibling,
+  moveEntryBeforeSibling,
+  nestEntryUnder,
+  nestUnderPreviousSibling,
+  nextSortIndex,
+  promoteEntry as outdentEntry,
+  restoreDeletedEntries,
+  nestUnderPreviousSibling as indentEntry
+} from './documentNoteTree'
