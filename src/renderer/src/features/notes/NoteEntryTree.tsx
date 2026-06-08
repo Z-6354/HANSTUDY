@@ -21,6 +21,7 @@ interface NoteEntryTreeProps {
   onInsertBelow: (id: string) => void
   onInsertSubmit: (parentId: string, markdown: string) => void
   onInsertCancel: () => void
+  notebookId?: string
 }
 
 export function NoteEntryTree({
@@ -37,7 +38,8 @@ export function NoteEntryTree({
   onToggleCollapse,
   onInsertBelow,
   onInsertSubmit,
-  onInsertCancel
+  onInsertCancel,
+  notebookId
 }: NoteEntryTreeProps): JSX.Element {
   const siblings = getNotebookChildren(entries, parentId, sortMode)
 
@@ -68,6 +70,7 @@ export function NoteEntryTree({
               onDragPointerDown={(id, e) => treeDrag.begin(id, e.clientX, e.clientY, e.pointerId)}
               insertBelowOpen={insertChildOpen}
               onInsertBelow={() => onInsertBelow(entry.id)}
+              notebookId={notebookId}
             />
             {showExpanded && (hasChildren || insertChildOpen) && (
               <div className="doc-note-entry-children">
@@ -87,6 +90,7 @@ export function NoteEntryTree({
                     onInsertBelow={onInsertBelow}
                     onInsertSubmit={onInsertSubmit}
                     onInsertCancel={onInsertCancel}
+                    notebookId={notebookId}
                   />
                 )}
                 {insertChildOpen && (

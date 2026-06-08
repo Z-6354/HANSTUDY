@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { SavedDocumentType, WorkspaceSession } from '@shared/readingProgress'
-import { SETTINGS_DOC_PATH, useWorkspaceStore, type OpenDocument } from '../stores/workspaceStore'
+import { SETTINGS_DOC_PATH, saveLayoutPanelPrefs, useWorkspaceStore, type OpenDocument, type SidebarTab } from '../stores/workspaceStore'
 
 const SAVE_DEBOUNCE_MS = 800
 
@@ -17,7 +17,23 @@ function buildSession(state: ReturnType<typeof useWorkspaceStore.getState>): Wor
   return {
     documents,
     activePath: active && active.path !== SETTINGS_DOC_PATH ? active.path : documents[0]?.path ?? null,
+    showSidebar: state.showSidebar,
+    showAIPanel: state.showAIPanel,
+    sidebarTab: state.sidebarTab,
     updatedAt: new Date().toISOString()
+  }
+}
+
+function applyLayoutFromSession(session: WorkspaceSession): void {
+  const store = useWorkspaceStore.getState()
+  const patch: Partial<ReturnType<typeof useWorkspaceStore.getState>> = {}
+  if (session.showSidebar != null) patch.showSidebar = session.showSidebar
+  if (session.showAIPanel != null) patch.showAIPanel = session.showAIPanel
+  if (session.sidebarTab) patch.sidebarTab = session.sidebarTab as SidebarTab
+  if (Object.keys(patch).length > 0) {
+    useWorkspaceStore.setState(patch)
+    const next = useWorkspaceStore.getState()
+    saveLayoutPanelPrefs(next.showSidebar, next.showAIPanel, next.sidebarTab)
   }
 }
 
@@ -31,7 +47,10 @@ export function useWorkspaceSessionPersist(): void {
 
     void (async () => {
       const session = await window.api.workspaceSession.get()
-      if (!session?.documents?.length) return
+      if (!session) return
+
+      applyLayoutFromSession(session)
+      if (!session.documents?.length) return
 
       const store = useWorkspaceStore.getState()
       if (store.documents.length > 0) return
@@ -77,7 +96,6 @@ export function useWorkspaceSessionPersist(): void {
   useEffect(() => {
     const persist = (): void => {
       const session = buildSession(useWorkspaceStore.getState())
-      if (session.documents.length === 0) return
       void window.api.workspaceSession.save(session)
     }
 
@@ -92,7 +110,10 @@ export function useWorkspaceSessionPersist(): void {
     const unsub = useWorkspaceStore.subscribe((state, prev) => {
       if (
         state.documents === prev.documents &&
-        state.activeDocumentId === prev.activeDocumentId
+        state.activeDocumentId === prev.activeDocumentId &&
+        state.showSidebar === prev.showSidebar &&
+        state.showAIPanel === prev.showAIPanel &&
+        state.sidebarTab === prev.sidebarTab
       ) {
         return
       }
@@ -113,4 +134,3 @@ export function useWorkspaceSessionPersist(): void {
     }
   }, [])
 }
-

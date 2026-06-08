@@ -9,17 +9,17 @@ export interface ChatModeOption {
 export const CHAT_MODES: ChatModeOption[] = [
   {
     id: 'chat',
-    label: '对话模式',
+    label: '对话',
     description: '自然对话，快速问答与日常交流'
   },
   {
     id: 'agent',
-    label: '智能体模式',
+    label: '智能体',
     description: '多步规划与任务分解，适合复杂问题'
   },
   {
     id: 'reading',
-    label: '阅读模式',
+    label: '阅读',
     description: '专注文档理解、摘要与精读辅助'
   }
 ]

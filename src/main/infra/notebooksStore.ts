@@ -358,6 +358,44 @@ export async function importLegacyThreadIfNeeded(
   return next
 }
 
+function remapImportedEntryIds(entries: DocumentNoteEntry[]): DocumentNoteEntry[] {
+  const idMap = new Map<string, string>()
+  for (const entry of entries) {
+    idMap.set(entry.id, `note-${randomUUID()}`)
+  }
+  return entries.map((entry, index) =>
+    normalizeEntry(
+      {
+        ...entry,
+        id: idMap.get(entry.id)!,
+        parentId: entry.parentId ? idMap.get(entry.parentId) : undefined
+      },
+      entry.sortIndex ?? index
+    )
+  )
+}
+
+/** 从导出文件创建新笔记本（新 id、去重名称、条目 id 重映射） */
+export async function importNotebook(source: Notebook): Promise<Notebook> {
+  await ensureIndex()
+  const index = await readIndex()
+  const existingNames = index?.notebooks.map((n) => n.name) ?? []
+  const now = new Date().toISOString()
+  const id = `notebook-${randomUUID().slice(0, 8)}`
+  const name = uniqueNotebookName(source.name?.trim() || '导入的笔记本', existingNames)
+  const notebook: Notebook = {
+    id,
+    name,
+    createdAt: now,
+    updatedAt: now,
+    defaultSortMode: source.defaultSortMode ?? 'manual',
+    linkedDocPaths: [...(source.linkedDocPaths ?? [])],
+    entries: remapImportedEntryIds(source.entries ?? [])
+  }
+  await saveNotebook(notebook)
+  return notebook
+}
+
 export async function ensureDefaultNotebook(): Promise<Notebook> {
   const index = await ensureIndex()
   const firstId = index.notebooks[0]?.id ?? DEFAULT_NOTEBOOK_ID

@@ -1,4 +1,5 @@
 import type { DocumentNoteEntry, NoteSortMode } from '@shared/documentNotes'
+import { isAiNoteAnchor } from '@shared/aiNoteMarkdown'
 
 export function noteDocBasename(docPath: string): string {
   const normalized = docPath.replace(/\\/g, '/')
@@ -54,6 +55,7 @@ export function sortDocumentNoteEntries(
 
 export function formatNoteAnchorLabel(entry: DocumentNoteEntry): string {
   const a = entry.anchor
+  if (isAiNoteAnchor(a.docPath, a.aiSessionId)) return 'AI 历史'
   if (a.pdfPage != null && a.pdfPage > 0) return `P.${a.pdfPage}`
   if (a.monacoLine != null && a.monacoLine > 0) return `L.${a.monacoLine}`
   if (a.scrollRatio != null) return `${Math.round(a.scrollRatio * 100)}%`

@@ -37,5 +37,11 @@ export interface SavedOpenDocument {
 export interface WorkspaceSession {
   documents: SavedOpenDocument[]
   activePath: string | null
+  /** 侧栏是否展开 */
+  showSidebar?: boolean
+  /** AI 面板是否展开 */
+  showAIPanel?: boolean
+  /** 侧栏当前标签 */
+  sidebarTab?: 'explorer' | 'notes' | 'web'
   updatedAt: string
 }

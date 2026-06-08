@@ -1,15 +1,19 @@
 import {
   ArrowDownWideNarrow,
   Clock,
+  Download,
   ListOrdered,
   Pencil,
   Plus,
-  Trash2
+  Trash2,
+  Upload
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DocumentNoteEntry, NoteSortMode } from '@shared/documentNotes'
 import { DEFAULT_NOTEBOOK_ID, type Notebook, type NotebookMeta } from '@shared/notebooks'
+import { parseNotebookExport, serializeNotebookExport } from '@shared/notebookExport'
 import type { SavedDocumentType } from '@shared/readingProgress'
+import { resetPageZoom } from '../../utils/pageZoomReset'
 import { ConfirmModal, PromptModal } from '../../ui/layout/PromptModal'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
 import type { DocumentType, OpenDocument } from '../../stores/workspaceStore'
@@ -23,8 +27,10 @@ import {
   nextSortIndexForParent,
   restoreDeletedEntries
 } from './documentNoteEntries'
+import { isAiNoteAnchor, AI_NOTE_DOC_PATH } from '@shared/aiNoteMarkdown'
 import { resolveNoteSortMode } from './documentNoteSort'
-import { navigateToNoteEntry } from './navigateToNoteEntry'
+import { navigateToNoteEntry, focusNoteEntryInPanelAfterSettle, navigateToAiSession } from './navigateToNoteEntry'
+import { useChatStore } from '../../stores/chatStore'
 import { NoteComposer } from './NoteComposer'
 import { NoteDeleteConfirmModal } from './NoteDeleteConfirmModal'
 import { NoteEntryTree } from './NoteEntryTree'
@@ -48,6 +54,17 @@ function newEntryId(): string {
   return `note-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
+function entryIdsToExpand(entries: DocumentNoteEntry[], entryId: string): Set<string> {
+  const byId = new Map(entries.map((e) => [e.id, e]))
+  const ids = new Set<string>([entryId])
+  let current = byId.get(entryId)
+  while (current?.parentId) {
+    ids.add(current.parentId)
+    current = byId.get(current.parentId)
+  }
+  return ids
+}
+
 interface DocumentNotePanelProps {
   doc: OpenDocument | null
 }
@@ -59,7 +76,11 @@ export function DocumentNotePanel({ doc }: DocumentNotePanelProps): JSX.Element 
     setNoteSortMode,
     activeNotebookId,
     setActiveNotebookId,
-    dispatchReaderNavigate
+    dispatchReaderNavigate,
+    noteInsertRequest,
+    clearNoteInsertRequest,
+    noteFocusRequest,
+    clearNoteFocusRequest
   } = useWorkspaceStore()
 
   const [notebookMetas, setNotebookMetas] = useState<NotebookMeta[]>([])
@@ -73,6 +94,7 @@ export function DocumentNotePanel({ doc }: DocumentNotePanelProps): JSX.Element 
   const [renameNotebookOpen, setRenameNotebookOpen] = useState(false)
   const [renameNotebookError, setRenameNotebookError] = useState<string | null>(null)
   const [pendingNotebookDelete, setPendingNotebookDelete] = useState<NotebookMeta | null>(null)
+  const [ioFeedback, setIoFeedback] = useState<string | null>(null)
   const [undoBundle, setUndoBundle] = useState<DocumentNoteEntry[] | null>(null)
   const listEndRef = useRef<HTMLDivElement>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -177,7 +199,7 @@ export function DocumentNotePanel({ doc }: DocumentNotePanelProps): JSX.Element 
         return applyMigration({
           ...nb,
           entries: prev.entries.length > nb.entries.length ? prev.entries : nb.entries,
-          linkedDocPaths: [...new Set([...prev.linkedDocPaths, ...nb.linkedDocPaths])]
+          linkedDocPaths: Array.from(new Set([...prev.linkedDocPaths, ...nb.linkedDocPaths]))
         })
       })
     })().catch((err: Error) => {
@@ -228,19 +250,39 @@ export function DocumentNotePanel({ doc }: DocumentNotePanelProps): JSX.Element 
   }, [])
 
   const createEntry = useCallback(
-    async (bodyMarkdown: string): Promise<DocumentNoteEntry> => {
-      if (!doc || !notebook) throw new Error('无文档或笔记本')
-      const anchor = await captureNoteAnchor(
-        doc.path,
-        toSavedDocType(doc.type),
-        doc.name,
-        selection
-      )
+    async (
+      bodyMarkdown: string,
+      source?: string,
+      aiSessionId?: string
+    ): Promise<DocumentNoteEntry> => {
       const now = new Date().toISOString()
+      if (!notebook) throw new Error('无笔记本')
+      if (doc) {
+        const anchor = await captureNoteAnchor(
+          doc.path,
+          toSavedDocType(doc.type),
+          doc.name,
+          selection
+        )
+        return {
+          id: newEntryId(),
+          bodyMarkdown,
+          anchor,
+          sortIndex: nextSortIndexForParent(notebook.entries, null),
+          createdAt: now,
+          updatedAt: now,
+          collapsed: false
+        }
+      }
       return {
         id: newEntryId(),
         bodyMarkdown,
-        anchor,
+        anchor: {
+          docPath: AI_NOTE_DOC_PATH,
+          docType: 'unknown',
+          docName: source ?? 'AI 对话',
+          aiSessionId
+        },
         sortIndex: nextSortIndexForParent(notebook.entries, null),
         createdAt: now,
         updatedAt: now,
@@ -252,7 +294,7 @@ export function DocumentNotePanel({ doc }: DocumentNotePanelProps): JSX.Element 
 
   const handleAdd = useCallback(
     async (bodyMarkdown: string): Promise<void> => {
-      if (!notebook) return
+      if (!notebook || !doc) return
       const entry = await createEntry(bodyMarkdown)
       persistNotebook((prev) => ({
         ...prev,
@@ -260,8 +302,120 @@ export function DocumentNotePanel({ doc }: DocumentNotePanelProps): JSX.Element 
       }))
       scrollToBottom()
     },
-    [createEntry, persistNotebook, scrollToBottom, notebook]
+    [createEntry, doc, persistNotebook, scrollToBottom, notebook]
   )
+
+  useEffect(() => {
+    if (!noteInsertRequest || !notebook) return
+    const { markdown, source, aiSessionId, seq } = noteInsertRequest
+    void (async () => {
+      try {
+        const entry = await createEntry(markdown, source, aiSessionId)
+        persistNotebook((prev) => ({
+          ...prev,
+          entries: [...prev.entries, entry]
+        }))
+        scrollToBottom()
+        setIoFeedback('已加入笔记')
+        window.setTimeout(() => setIoFeedback(null), 2000)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '加入笔记失败')
+      } finally {
+        if (useWorkspaceStore.getState().noteInsertRequest?.seq === seq) {
+          clearNoteInsertRequest()
+        }
+      }
+    })()
+  }, [
+    clearNoteInsertRequest,
+    createEntry,
+    noteInsertRequest,
+    notebook,
+    persistNotebook,
+    scrollToBottom
+  ])
+
+  useEffect(() => {
+    if (!noteFocusRequest) return
+    const { entryId, notebookId, seq } = noteFocusRequest
+    const targetNotebookId = notebookId ?? notebook?.id
+    if (!targetNotebookId) {
+      clearNoteFocusRequest()
+      return
+    }
+
+    if (notebook?.id !== targetNotebookId) {
+      void flushPendingSave()
+        .then(() => loadNotebook(targetNotebookId))
+        .catch((err: Error) => {
+          setError(err.message || '无法切换笔记本')
+          clearNoteFocusRequest()
+        })
+      return
+    }
+
+    if (!notebook) return
+
+    if (!notebook.entries.some((e) => e.id === entryId)) {
+      clearNoteFocusRequest()
+      return
+    }
+    const expandIds = entryIdsToExpand(notebook.entries, entryId)
+    persistNotebook((prev) => ({
+      ...prev,
+      entries: prev.entries.map((e) =>
+        expandIds.has(e.id) ? { ...e, collapsed: false } : e
+      )
+    }))
+    resetPageZoom()
+    focusNoteEntryInPanelAfterSettle(entryId)
+    if (useWorkspaceStore.getState().noteFocusRequest?.seq === seq) {
+      clearNoteFocusRequest()
+    }
+  }, [
+    clearNoteFocusRequest,
+    flushPendingSave,
+    loadNotebook,
+    noteFocusRequest,
+    notebook,
+    persistNotebook
+  ])
+
+  const handleExportNotebook = useCallback((): void => {
+    if (!notebook) return
+    void (async () => {
+      try {
+        const ok = await window.api.dialog.saveJson(
+          serializeNotebookExport(notebook),
+          `${notebook.name}.json`
+        )
+        if (ok) {
+          setIoFeedback('已导出笔记本')
+          window.setTimeout(() => setIoFeedback(null), 2000)
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '导出失败')
+      }
+    })()
+  }, [notebook])
+
+  const handleImportNotebook = useCallback((): void => {
+    void (async () => {
+      try {
+        const picked = await window.api.dialog.openJson()
+        if (!picked) return
+        const parsed = parseNotebookExport(picked.content)
+        await flushPendingSave()
+        const imported = await window.api.notebooks.importNotebook(parsed)
+        await refreshIndex()
+        await loadNotebook(imported.id)
+        setIoFeedback(`已导入「${imported.name}」`)
+        window.setTimeout(() => setIoFeedback(null), 2000)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '导入失败')
+      }
+    })()
+  }, [flushPendingSave, loadNotebook, refreshIndex])
 
   const handleInsertChild = useCallback(
     (parentEntryId: string): void => {
@@ -405,6 +559,15 @@ export function DocumentNotePanel({ doc }: DocumentNotePanelProps): JSX.Element 
 
   const handleNavigate = useCallback(
     (entry: DocumentNoteEntry): void => {
+      if (isAiNoteAnchor(entry.anchor.docPath, entry.anchor.aiSessionId)) {
+        if (entry.anchor.aiSessionId) {
+          navigateToAiSession(entry.anchor.aiSessionId)
+          return
+        }
+        useWorkspaceStore.getState().openAIPanel()
+        useChatStore.getState().setShowHistory(true)
+        return
+      }
       void navigateToNoteEntry(entry.anchor, dispatchReaderNavigate).catch((err: Error) => {
         setError(err.message || '无法跳转到文档')
       })
@@ -557,6 +720,25 @@ export function DocumentNotePanel({ doc }: DocumentNotePanelProps): JSX.Element 
           </button>
           <button
             type="button"
+            className="doc-note-notebook-io"
+            title="导出当前笔记本"
+            aria-label="导出当前笔记本"
+            disabled={!notebook}
+            onClick={handleExportNotebook}
+          >
+            <Download size={14} />
+          </button>
+          <button
+            type="button"
+            className="doc-note-notebook-io"
+            title="从文件导入笔记本"
+            aria-label="从文件导入笔记本"
+            onClick={handleImportNotebook}
+          >
+            <Upload size={14} />
+          </button>
+          <button
+            type="button"
             className="doc-note-notebook-delete"
             title={
               notebook?.id === DEFAULT_NOTEBOOK_ID
@@ -607,6 +789,7 @@ export function DocumentNotePanel({ doc }: DocumentNotePanelProps): JSX.Element 
       </header>
 
       {error && <div className="doc-note-panel-error">{error}</div>}
+      {ioFeedback && <div className="doc-note-panel-io-feedback">{ioFeedback}</div>}
 
       {effectiveSortMode !== 'manual' && rootEntries.length > 0 && (
         <div className="doc-note-panel-sort-hint" role="status">
@@ -648,6 +831,7 @@ export function DocumentNotePanel({ doc }: DocumentNotePanelProps): JSX.Element 
             onInsertBelow={handleInsertChild}
             onInsertSubmit={(parentId, md) => void handleInsertChildSubmit(parentId, md)}
             onInsertCancel={() => setInlineInsertAfterId(null)}
+            notebookId={notebook?.id}
           />
         )}
         <div ref={listEndRef} />

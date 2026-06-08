@@ -18,7 +18,9 @@ import {
 import type { DocumentNoteEntry } from '@shared/documentNotes'
 import { IconButton } from '../../components/IconButton'
 import { formatNoteAnchorLabel, formatNoteDocLabel } from './documentNoteSort'
+import { isAiNoteAnchor } from '@shared/aiNoteMarkdown'
 import { renderNoteMarkdownHtml } from './noteMarkdown'
+import { useWorkspaceStore } from '../../stores/workspaceStore'
 
 export type NoteDropIntent = 'nest' | 'before' | 'after'
 
@@ -36,6 +38,7 @@ interface NoteEntryCardProps {
   onInsertBelow: () => void
   insertBelowOpen?: boolean
   forceExpanded?: boolean
+  notebookId?: string
 }
 
 function isDragExcludedTarget(target: EventTarget | null): boolean {
@@ -64,12 +67,14 @@ export function NoteEntryCard({
   onDragPointerDown,
   onInsertBelow,
   insertBelowOpen = false,
-  forceExpanded = false
+  forceExpanded = false,
+  notebookId
 }: NoteEntryCardProps): JSX.Element {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(entry.bodyMarkdown)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const collapsed = forceExpanded ? false : (entry.collapsed ?? false)
+  const { addChatContextItem, openAIPanel } = useWorkspaceStore()
 
   const previewHtml = useMemo(
     () => renderNoteMarkdownHtml(entry.bodyMarkdown),
@@ -109,12 +114,33 @@ export function NoteEntryCard({
     onToggleCollapse(entry.id)
   }
 
+  const handleAddToChat = (): void => {
+    const content =
+      entry.bodyMarkdown.trim() ||
+      entry.anchor.quoteText?.trim() ||
+      '（空笔记）'
+    addChatContextItem({
+      kind: 'note',
+      label: formatNoteDocLabel(entry),
+      content,
+      hint: formatNoteAnchorLabel(entry),
+      noteEntryId: entry.id,
+      anchor: entry.anchor,
+      notebookId
+    })
+    openAIPanel()
+    setContextMenu(null)
+  }
+
   const handleContextMenu = (e: MouseEvent): void => {
     if (editing) return
     e.preventDefault()
     e.stopPropagation()
     setContextMenu({ x: e.clientX, y: e.clientY })
   }
+
+  const isAiNote = isAiNoteAnchor(entry.anchor.docPath, entry.anchor.aiSessionId)
+  const navigateTitle = isAiNote ? '跳转到 AI 对话历史' : entry.anchor.docPath
 
   return (
     <>
@@ -137,7 +163,7 @@ export function NoteEntryCard({
           <button
             type="button"
             className="doc-note-entry-doc"
-            title={entry.anchor.docPath}
+            title={navigateTitle}
             onClick={() => onNavigate(entry)}
           >
             {formatNoteDocLabel(entry)}
@@ -145,7 +171,7 @@ export function NoteEntryCard({
           <button
             type="button"
             className="doc-note-entry-anchor"
-            title="跳转到对应文档位置"
+            title={isAiNote ? '跳转到 AI 对话历史' : '跳转到对应文档位置'}
             onClick={() => onNavigate(entry)}
           >
             <MapPin size={12} />
@@ -159,10 +185,10 @@ export function NoteEntryCard({
             <>
               <IconButton
                 icon={Sparkles}
-                label="Ask AI（即将推出）"
+                label="添加到 AI 对话"
                 size={14}
-                disabled
                 className="doc-note-entry-ai"
+                onClick={handleAddToChat}
               />
               <IconButton
                 icon={ListPlus}
@@ -228,6 +254,16 @@ export function NoteEntryCard({
           style={{ left: contextMenu.x, top: contextMenu.y }}
           onMouseDown={(e) => e.stopPropagation()}
         >
+          <button
+            type="button"
+            onMouseDown={(e) => {
+              e.preventDefault()
+              handleAddToChat()
+            }}
+          >
+            <Sparkles size={14} />
+            添加到 AI 对话
+          </button>
           <button
             type="button"
             className="danger"

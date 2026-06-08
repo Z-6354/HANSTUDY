@@ -1,12 +1,17 @@
 import { useMemo } from 'react'
+import type { ChatContextSnapshot } from '@shared/aiContext'
 import { renderMarkdownHtml } from '../../utils/markdown'
+import { MessageContextChips } from './MessageContextChips'
 
 interface AIMessageBubbleProps {
   role: 'user' | 'assistant'
   content: string
   isStreaming?: boolean
   isError?: boolean
+  contextItems?: ChatContextSnapshot[]
+  onContextItemNavigate?: (item: ChatContextSnapshot) => void
   children?: React.ReactNode
+  onContextMenu?: (e: React.MouseEvent) => void
 }
 
 export function AIMessageBubble({
@@ -14,7 +19,10 @@ export function AIMessageBubble({
   content,
   isStreaming,
   isError,
-  children
+  contextItems,
+  onContextItemNavigate,
+  children,
+  onContextMenu
 }: AIMessageBubbleProps): JSX.Element {
   const html = useMemo(
     () => (role === 'assistant' && !isError ? renderMarkdownHtml(content) : ''),
@@ -26,7 +34,7 @@ export function AIMessageBubble({
     role === 'assistant' && isStreaming && content.trim().length > 0 && !isError
 
   return (
-    <div className={`ai-bubble-row ai-bubble-row-${role}`}>
+    <div className={`ai-bubble-row ai-bubble-row-${role}`} onContextMenu={onContextMenu}>
       <div className={`ai-bubble ai-bubble-${role}${isError ? ' ai-bubble-error' : ''}`}>
         {role === 'user' ? (
           <div className="ai-bubble-text">{content}</div>
@@ -42,6 +50,13 @@ export function AIMessageBubble({
           <div
             className={`ai-bubble-md markdown-preview ${showStreamCursor ? 'is-streaming' : ''}`}
             dangerouslySetInnerHTML={{ __html: html || '<p></p>' }}
+          />
+        )}
+        {role === 'user' && contextItems && contextItems.length > 0 && (
+          <MessageContextChips
+            items={contextItems}
+            onNavigate={onContextItemNavigate}
+            className="ai-message-context-chips--below"
           />
         )}
         {children && <div className="ai-bubble-actions">{children}</div>}

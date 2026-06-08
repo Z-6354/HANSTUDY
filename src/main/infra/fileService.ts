@@ -1,7 +1,7 @@
 import { readFile, copyFile, cp, mkdir, readdir, rename, rm, stat, writeFile } from 'fs/promises'
 import mammoth from 'mammoth'
 import { basename, extname, join } from 'path'
-import { extractPdfText } from './pdfTextService'
+import { extractMdSection, extractTxtWindow, MAX_AI_DOC_CONTEXT } from '../../shared/documentContextExtract'
 
 export const SUPPORTED_EXTENSIONS = new Set([
   '.txt',
@@ -208,12 +208,40 @@ export async function importFilesToDirectory(
   return results
 }
 
-const MAX_DOC_CONTEXT = 12000
+export interface DocumentContextOptions {
+  monacoLine?: number
+  scrollRatio?: number
+}
 
 export interface DocumentContext {
   fileName: string
   content: string
   truncated: boolean
+  sectionTitle?: string
+}
+
+export async function getAiChatDocumentContext(
+  filePath: string,
+  options: DocumentContextOptions = {}
+): Promise<DocumentContext> {
+  const fileName = basename(filePath)
+  const ext = extname(filePath).toLowerCase()
+  if (ext !== '.txt' && ext !== '.md') {
+    throw new Error('暂仅支持 TXT / Markdown 加入 AI 对话')
+  }
+
+  const full = await readTextFile(filePath)
+  const extracted =
+    ext === '.md'
+      ? extractMdSection(full, options.monacoLine)
+      : extractTxtWindow(full, options.monacoLine, options.scrollRatio)
+
+  return {
+    fileName,
+    content: extracted.content,
+    truncated: extracted.truncated,
+    sectionTitle: extracted.sectionTitle
+  }
 }
 
 export async function getDocumentContext(filePath: string): Promise<DocumentContext> {
@@ -228,6 +256,7 @@ export async function getDocumentContext(filePath: string): Promise<DocumentCont
     const result = await mammoth.extractRawText({ buffer })
     content = result.value
   } else if (ext === '.pdf') {
+    const { extractPdfText } = await import('./pdfTextService')
     content = await extractPdfText(filePath)
     if (!content.trim()) {
       content =
@@ -237,9 +266,9 @@ export async function getDocumentContext(filePath: string): Promise<DocumentCont
     content = '（不支持该格式的全文提取）'
   }
 
-  const truncated = content.length > MAX_DOC_CONTEXT
+  const truncated = content.length > MAX_AI_DOC_CONTEXT
   if (truncated) {
-    content = content.slice(0, MAX_DOC_CONTEXT) + '\n\n…（文档过长，已截断）'
+    content = content.slice(0, MAX_AI_DOC_CONTEXT) + '\n\n…（文档过长，已截断）'
   }
 
   return { fileName, content, truncated }

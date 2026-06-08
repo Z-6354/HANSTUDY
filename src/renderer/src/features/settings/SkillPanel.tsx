@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { FolderOpen, FolderPlus, RefreshCw } from 'lucide-react'
+import { FolderOpen, FolderPlus, RefreshCw, Trash2 } from 'lucide-react'
+import { skillDisplayName } from '@shared/skillLabels'
 import { IconButton } from '../../components/IconButton'
 import type { SkillListItem } from '../../types/global.d'
 
@@ -54,9 +55,9 @@ export function SkillPanel(): JSX.Element {
       const result = await window.api.skills.install()
       if (!result) return
       setSkills(result.skills)
-      setMessage(`已安装 Skill：${result.name}`)
+      setMessage(`已导入 Skill：${skillDisplayName(result.name)}`)
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : '安装失败')
+      setMessage(err instanceof Error ? err.message : '导入失败')
     }
   }
 
@@ -69,17 +70,35 @@ export function SkillPanel(): JSX.Element {
     }
   }
 
+  const handleDelete = async (skill: SkillListItem): Promise<void> => {
+    const label = skillDisplayName(skill.name)
+    const ok = window.confirm(`确定删除 Skill「${label}」？\n\n将移除用户目录中的技能包，此操作不可撤销。`)
+    if (!ok) return
+
+    setBusyName(skill.name)
+    setMessage('')
+    try {
+      const list = await window.api.skills.delete(skill.name)
+      setSkills(list)
+      setMessage(`已删除 Skill：${label}`)
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : '删除失败')
+    } finally {
+      setBusyName(null)
+    }
+  }
+
   return (
     <div className="settings-section">
       <h2 className="settings-section-title">Skill</h2>
       <p className="settings-section-desc">
-        管理 Agent Skill 技能包。启用后会在对话中按场景自动加载（参考 hancli 索引 + 按需注入模式）。
+        查看、导入与删除 Agent Skill。启用后会在对话中按场景自动加载；在对话栏 Skill 菜单中可临时排除本次会话。
       </p>
 
       <div className="skill-panel-actions">
         <IconButton
           icon={FolderPlus}
-          label="从文件夹安装"
+          label="导入 Skill"
           className="secondary-btn"
           onClick={() => void handleInstall()}
         />
@@ -91,7 +110,7 @@ export function SkillPanel(): JSX.Element {
         />
         <IconButton
           icon={RefreshCw}
-          label="重新扫描"
+          label="刷新列表"
           className="secondary-btn"
           onClick={() => void refresh()}
         />
@@ -104,7 +123,7 @@ export function SkillPanel(): JSX.Element {
       ) : skills.length === 0 ? (
         <div className="settings-placeholder">
           <p>未发现 Skill</p>
-          <p className="settings-hint">可将含 SKILL.md 的文件夹安装到用户目录，或在项目中放置 .hanstudy/skills/</p>
+          <p className="settings-hint">点击「导入 Skill」安装含 SKILL.md 的文件夹，或在项目中放置 .hanstudy/skills/</p>
         </div>
       ) : (
         <div className="skill-list">
@@ -112,7 +131,8 @@ export function SkillPanel(): JSX.Element {
             <div key={skill.name} className={`skill-item ${skill.enabled ? 'enabled' : 'disabled'}`}>
               <div className="skill-item-main">
                 <div className="skill-item-header">
-                  <span className="skill-item-name">{skill.name}</span>
+                  <span className="skill-item-name">{skillDisplayName(skill.name)}</span>
+                  <span className="skill-item-id">{skill.name}</span>
                   <span className={`skill-source-badge source-${skill.source}`}>
                     {SOURCE_LABEL[skill.source]}
                   </span>
@@ -129,15 +149,26 @@ export function SkillPanel(): JSX.Element {
                 )}
                 <p className="skill-item-path">{skill.skillMdPath}</p>
               </div>
-              <label className="skill-toggle">
-                <input
-                  type="checkbox"
-                  checked={skill.enabled}
-                  disabled={busyName === skill.name}
-                  onChange={() => void handleToggle(skill)}
-                />
-                <span>{skill.enabled ? '已启用' : '已禁用'}</span>
-              </label>
+              <div className="skill-item-actions">
+                <label className="skill-toggle">
+                  <input
+                    type="checkbox"
+                    checked={skill.enabled}
+                    disabled={busyName === skill.name}
+                    onChange={() => void handleToggle(skill)}
+                  />
+                  <span>{skill.enabled ? '已启用' : '已禁用'}</span>
+                </label>
+                {skill.source === 'user' && (
+                  <IconButton
+                    icon={Trash2}
+                    label="删除 Skill"
+                    className="secondary-btn skill-delete-btn"
+                    disabled={busyName === skill.name}
+                    onClick={() => void handleDelete(skill)}
+                  />
+                )}
+              </div>
             </div>
           ))}
         </div>

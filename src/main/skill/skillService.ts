@@ -1,5 +1,6 @@
 import { app } from 'electron'
 import { existsSync } from 'fs'
+import { rm } from 'fs/promises'
 import { join } from 'path'
 import type { ChatMode } from '../../shared/types'
 import type { Skill, SkillChatMeta, SkillListItem } from '../../shared/skills'
@@ -84,6 +85,19 @@ export async function installSkill(sourceDir: string): Promise<string> {
   const name = await installSkillFromDirectory(sourceDir, paths.userDir)
   await registry.reloadAsync()
   return name
+}
+
+export async function deleteSkill(name: string): Promise<void> {
+  if (!registry || !paths) throw new Error('Skill 服务未初始化')
+  const skill = registry.findAnySkill(name)
+  if (!skill) throw new Error(`未找到 Skill：${name}`)
+  if (skill.source !== 'user') {
+    throw new Error('仅可删除用户安装的 Skill')
+  }
+  const dir = join(paths.userDir, name)
+  await rm(dir, { recursive: true, force: true })
+  await registry.state.enable(name)
+  await registry.reloadAsync()
 }
 
 export function getUserSkillsDir(): string {

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { mergeChatContextItems, type ChatContextItem } from '@shared/aiContext'
 import { resolveWebInput, webUrlKey } from '@shared/webCrop'
 import { webDisplayTitle } from '@shared/webLibrary'
 import { useWebLibraryStore } from './webLibraryStore'
@@ -43,6 +44,12 @@ function saveActiveNotebookId(id: string | null): void {
   } catch {
     // ignore
   }
+}
+
+export type { ChatContextItem }
+
+function genContextId(): string {
+  return `ctx-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
 }
 
 export type DocumentType = 'txt' | 'md' | 'pdf' | 'docx' | 'web' | 'settings' | 'unknown'
@@ -93,6 +100,19 @@ interface ViewerStatus {
   detail?: string
 }
 
+export interface NoteInsertRequest {
+  seq: number
+  markdown: string
+  source?: string
+  aiSessionId?: string
+}
+
+export interface NoteFocusRequest {
+  seq: number
+  entryId: string
+  notebookId?: string
+}
+
 interface WorkspaceState {
   documents: OpenDocument[]
   activeDocumentId: string | null
@@ -108,14 +128,16 @@ interface WorkspaceState {
   sidebarTab: SidebarTab
   selection: TextSelectionContext | null
   aiDraft: string
-  chatAttachedDoc: { path: string; name: string } | null
-  chatDocContext: string | null
+  chatContextItems: ChatContextItem[]
+  noteInsertRequest: NoteInsertRequest | null
+  noteInsertSeq: number
+  noteFocusRequest: NoteFocusRequest | null
+  noteFocusSeq: number
   webSessions: Record<string, WebViewSession>
   webNavSeq: number
   webNavAction: { seq: number; action: WebNavAction; url?: string } | null
   focusMode: boolean
   focusModeRestore: LayoutRestore | null
-  maximizeLayoutRestore: LayoutRestore | null
   viewerStatus: ViewerStatus | null
   viewerCommandSeq: number
   viewerCommand: ViewerCommand | null
@@ -152,8 +174,16 @@ interface WorkspaceState {
   setActiveNotePath: (path: string | null) => void
   setSelection: (selection: TextSelectionContext | null) => void
   setAiDraft: (draft: string) => void
-  attachDocumentToChat: (path: string, name: string, content: string) => void
-  detachDocumentFromChat: () => void
+  addChatContextItem: (
+    item: Omit<ChatContextItem, 'id'> & { id?: string }
+  ) => void
+  removeChatContextItem: (id: string) => void
+  clearChatContextItems: () => void
+  getMergedChatContext: () => { fileName: string; content: string } | undefined
+  requestNoteInsert: (markdown: string, source?: string, aiSessionId?: string) => void
+  clearNoteInsertRequest: () => void
+  requestNoteFocus: (entryId: string, notebookId?: string) => void
+  clearNoteFocusRequest: () => void
   setWebSession: (session: WebViewSession | null) => void
   clearWebSession: (docId: string) => void
   updateWebSession: (docId: string, patch: Partial<Omit<WebViewSession, 'docId'>>) => void
@@ -162,8 +192,6 @@ interface WorkspaceState {
   sendToAI: (text: string, docPath: string, range?: TextSelectionContext['range']) => void
   toggleFocusMode: () => void
   exitFocusMode: () => void
-  enterMaximizeLayout: () => void
-  exitMaximizeLayout: () => void
   setViewerStatus: (status: ViewerStatus | null) => void
   dispatchViewerCommand: (kind: ViewerCommandKind) => void
   closeFindBar: () => void
@@ -177,6 +205,55 @@ interface WorkspaceState {
 
 const RECENT_KEY = 'hanstudy-recent-files'
 const WORKBENCH_MODE_KEY = 'hanstudy-workbench-mode'
+const SHOW_SIDEBAR_KEY = 'hanstudy-show-sidebar'
+const SHOW_AI_PANEL_KEY = 'hanstudy-show-ai-panel'
+const SIDEBAR_TAB_KEY = 'hanstudy-sidebar-tab'
+
+function loadShowSidebar(): boolean {
+  try {
+    const raw = localStorage.getItem(SHOW_SIDEBAR_KEY)
+    if (raw === 'false') return false
+    if (raw === 'true') return true
+  } catch {
+    // ignore
+  }
+  return true
+}
+
+function loadShowAIPanel(): boolean {
+  try {
+    const raw = localStorage.getItem(SHOW_AI_PANEL_KEY)
+    if (raw === 'false') return false
+    if (raw === 'true') return true
+  } catch {
+    // ignore
+  }
+  return true
+}
+
+function loadSidebarTab(): SidebarTab {
+  try {
+    const raw = localStorage.getItem(SIDEBAR_TAB_KEY)
+    if (raw === 'explorer' || raw === 'notes' || raw === 'web') return raw
+  } catch {
+    // ignore
+  }
+  return 'explorer'
+}
+
+export function saveLayoutPanelPrefs(
+  showSidebar: boolean,
+  showAIPanel: boolean,
+  sidebarTab: SidebarTab
+): void {
+  try {
+    localStorage.setItem(SHOW_SIDEBAR_KEY, String(showSidebar))
+    localStorage.setItem(SHOW_AI_PANEL_KEY, String(showAIPanel))
+    localStorage.setItem(SIDEBAR_TAB_KEY, sidebarTab)
+  } catch {
+    // ignore
+  }
+}
 
 function loadWorkbenchMode(): WorkbenchMode {
   try {
@@ -210,23 +287,25 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   rootFolder: null,
   fileTree: [],
   recentFiles: loadRecent(),
-  showAIPanel: true,
-  showSidebar: true,
+  showAIPanel: loadShowAIPanel(),
+  showSidebar: loadShowSidebar(),
   showTabBar: true,
   workbenchMode: loadWorkbenchMode(),
   activeNotePath: null,
   settingsSection: 'system' as SettingsSection,
-  sidebarTab: 'explorer',
+  sidebarTab: loadSidebarTab(),
   selection: null,
   aiDraft: '',
-  chatAttachedDoc: null,
-  chatDocContext: null,
+  chatContextItems: [],
+  noteInsertRequest: null,
+  noteInsertSeq: 0,
+  noteFocusRequest: null,
+  noteFocusSeq: 0,
   webSessions: {},
   webNavSeq: 0,
   webNavAction: null,
   focusMode: false,
   focusModeRestore: null,
-  maximizeLayoutRestore: null,
   viewerStatus: null,
   viewerCommandSeq: 0,
   viewerCommand: null,
@@ -271,6 +350,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       showSidebar: layout.webBrowseHideSidebar ? false : state.showSidebar,
       showAIPanel: layout.webBrowseHideAIPanel ? false : state.showAIPanel
     }))
+    const afterWeb = get()
+    saveLayoutPanelPrefs(afterWeb.showSidebar, afterWeb.showAIPanel, afterWeb.sidebarTab)
     const key = webUrlKey(url)
     const historyTitle = useWebLibraryStore
       .getState()
@@ -352,13 +433,22 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const webSessions = { ...state.webSessions }
       delete webSessions[id]
       const detachChat =
-        closed != null && state.chatAttachedDoc?.path === closed.path
+        closed != null &&
+        state.chatContextItems.some(
+          (item) => item.kind === 'document' && item.docPath === closed.path
+        )
       return {
         documents,
         activeDocumentId,
         selection: null,
         webSessions,
-        ...(detachChat ? { chatAttachedDoc: null, chatDocContext: null } : {})
+        ...(detachChat
+          ? {
+              chatContextItems: state.chatContextItems.filter(
+                (item) => !(item.kind === 'document' && item.docPath === closed!.path)
+              )
+            }
+          : {})
       }
     })
   },
@@ -369,22 +459,28 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       if (doc.type === 'web') void window.api.webGuest.destroyDoc(doc.id)
     }
     set((state) => {
-      const kept = state.documents.find((d) => d.id === id)
       const documents = state.documents.filter((d) => d.id === id)
       const webSessions: Record<string, WebViewSession> = {}
       if (state.webSessions[id]) {
         webSessions[id] = state.webSessions[id]
       }
-      const detachChat =
-        kept != null &&
-        state.chatAttachedDoc != null &&
-        state.chatAttachedDoc.path !== kept.path
+      const keptPaths = new Set(documents.map((d) => d.path))
+      const detachChat = state.chatContextItems.some(
+        (item) => item.kind === 'document' && item.docPath && !keptPaths.has(item.docPath)
+      )
       return {
         documents,
         activeDocumentId: documents.length > 0 ? id : null,
         selection: null,
         webSessions,
-        ...(detachChat ? { chatAttachedDoc: null, chatDocContext: null } : {})
+        ...(detachChat
+          ? {
+              chatContextItems: state.chatContextItems.filter(
+                (item) =>
+                  item.kind !== 'document' || !item.docPath || keptPaths.has(item.docPath)
+              )
+            }
+          : {})
       }
     })
   },
@@ -393,14 +489,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     for (const doc of get().documents) {
       if (doc.type === 'web') void window.api.webGuest.destroyDoc(doc.id)
     }
-    set({
+    set((state) => ({
       documents: [],
       activeDocumentId: null,
       selection: null,
       webSessions: {},
-      chatAttachedDoc: null,
-      chatDocContext: null
-    })
+      chatContextItems: state.chatContextItems.filter((item) => item.kind !== 'document')
+    }))
   },
 
   reorderDocuments: (fromId, toId) => {
@@ -435,21 +530,40 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     })
   },
 
-  toggleAIPanel: () => set((state) => ({ showAIPanel: !state.showAIPanel })),
+  toggleAIPanel: () =>
+    set((state) => {
+      const showAIPanel = !state.showAIPanel
+      saveLayoutPanelPrefs(state.showSidebar, showAIPanel, state.sidebarTab)
+      return { showAIPanel }
+    }),
 
-  openAIPanel: () => set({ showAIPanel: true }),
+  openAIPanel: () =>
+    set((state) => {
+      saveLayoutPanelPrefs(state.showSidebar, true, state.sidebarTab)
+      return { showAIPanel: true }
+    }),
 
-  closeAIPanel: () => set({ showAIPanel: false }),
+  closeAIPanel: () =>
+    set((state) => {
+      saveLayoutPanelPrefs(state.showSidebar, false, state.sidebarTab)
+      return { showAIPanel: false }
+    }),
 
   toggleLayoutPanel: (panel) => {
     set((state) => {
       switch (panel) {
-        case 'sidebar':
-          return { showSidebar: !state.showSidebar }
+        case 'sidebar': {
+          const showSidebar = !state.showSidebar
+          saveLayoutPanelPrefs(showSidebar, state.showAIPanel, state.sidebarTab)
+          return { showSidebar }
+        }
         case 'tabBar':
           return { showTabBar: !state.showTabBar }
-        case 'aiPanel':
-          return { showAIPanel: !state.showAIPanel }
+        case 'aiPanel': {
+          const showAIPanel = !state.showAIPanel
+          saveLayoutPanelPrefs(state.showSidebar, showAIPanel, state.sidebarTab)
+          return { showAIPanel }
+        }
         default:
           return state
       }
@@ -457,13 +571,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   openSidebar: (tab) => {
-    set((state) => ({
-      showSidebar: true,
-      sidebarTab: tab ?? state.sidebarTab
-    }))
+    set((state) => {
+      const sidebarTab = tab ?? state.sidebarTab
+      saveLayoutPanelPrefs(true, state.showAIPanel, sidebarTab)
+      return { showSidebar: true, sidebarTab }
+    })
   },
 
-  closeSidebar: () => set({ showSidebar: false }),
+  closeSidebar: () =>
+    set((state) => {
+      saveLayoutPanelPrefs(false, state.showAIPanel, state.sidebarTab)
+      return { showSidebar: false }
+    }),
 
   openSettings: (section = 'system') => {
     const existing = get().documents.find((d) => d.path === SETTINGS_DOC_PATH)
@@ -481,7 +600,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   setSettingsSection: (section) => set({ settingsSection: section }),
 
-  setSidebarTab: (tab) => set({ sidebarTab: tab }),
+  setSidebarTab: (tab) =>
+    set((state) => {
+      saveLayoutPanelPrefs(state.showSidebar, state.showAIPanel, tab)
+      return { sidebarTab: tab }
+    }),
 
   setWorkbenchMode: (mode) => {
     saveWorkbenchMode(mode)
@@ -494,12 +617,66 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   setAiDraft: (draft) => set({ aiDraft: draft }),
 
-  attachDocumentToChat: (path, name, content) =>
-    set({ chatAttachedDoc: { path, name }, chatDocContext: content }),
+  addChatContextItem: (item) =>
+    set((state) => {
+      const id = item.id ?? genContextId()
+      const next: ChatContextItem = { ...item, id }
+      const withoutDup = state.chatContextItems.filter((existing) => {
+        if (next.noteEntryId && existing.noteEntryId === next.noteEntryId) return false
+        if (
+          next.kind === 'document' &&
+          existing.kind === 'document' &&
+          next.docPath &&
+          existing.docPath === next.docPath
+        ) {
+          return false
+        }
+        return true
+      })
+      saveLayoutPanelPrefs(state.showSidebar, true, state.sidebarTab)
+      return { chatContextItems: [...withoutDup, next], showAIPanel: true }
+    }),
 
-  detachDocumentFromChat: () => set({ chatAttachedDoc: null, chatDocContext: null }),
+  removeChatContextItem: (id) =>
+    set((state) => ({
+      chatContextItems: state.chatContextItems.filter((item) => item.id !== id)
+    })),
+
+  clearChatContextItems: () => set({ chatContextItems: [] }),
+
+  getMergedChatContext: () => mergeChatContextItems(get().chatContextItems),
+
+  requestNoteInsert: (markdown, source, aiSessionId) =>
+    set((state) => {
+      saveLayoutPanelPrefs(true, state.showAIPanel, 'notes')
+      return {
+        noteInsertSeq: state.noteInsertSeq + 1,
+        noteInsertRequest: {
+          seq: state.noteInsertSeq + 1,
+          markdown,
+          source,
+          aiSessionId
+        },
+        workbenchMode: 'compose',
+        sidebarTab: 'notes',
+        showSidebar: true
+      }
+    }),
+
+  clearNoteInsertRequest: () => set({ noteInsertRequest: null }),
+
+  requestNoteFocus: (entryId, notebookId) =>
+    set((state) => ({
+      noteFocusSeq: state.noteFocusSeq + 1,
+      noteFocusRequest: { seq: state.noteFocusSeq + 1, entryId, notebookId },
+      workbenchMode: 'compose'
+    })),
+
+  clearNoteFocusRequest: () => set({ noteFocusRequest: null }),
 
   sendToAI: (text, docPath, range) => {
+    const state = get()
+    saveLayoutPanelPrefs(state.showSidebar, true, state.sidebarTab)
     set({
       showAIPanel: true,
       selection: { docPath, text, range },
@@ -525,36 +702,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const state = get()
     if (!state.focusMode) return
     const restore = state.focusModeRestore
+    const showSidebar = restore?.showSidebar ?? state.showSidebar
+    const showAIPanel = restore?.showAIPanel ?? state.showAIPanel
+    saveLayoutPanelPrefs(showSidebar, showAIPanel, state.sidebarTab)
     set({
       focusMode: false,
       focusModeRestore: null,
-      showSidebar: restore?.showSidebar ?? state.showSidebar,
-      showAIPanel: restore?.showAIPanel ?? state.showAIPanel
-    })
-    if (get().maximizeLayoutRestore) {
-      get().enterMaximizeLayout()
-    }
-  },
-
-  enterMaximizeLayout: () => {
-    const state = get()
-    if (state.focusMode) return
-    if (!state.maximizeLayoutRestore) {
-      set({
-        maximizeLayoutRestore: { showSidebar: state.showSidebar, showAIPanel: state.showAIPanel }
-      })
-    }
-    set({ showSidebar: false, showAIPanel: false })
-  },
-
-  exitMaximizeLayout: () => {
-    const state = get()
-    const restore = state.maximizeLayoutRestore
-    if (!restore) return
-    set({
-      maximizeLayoutRestore: null,
-      showSidebar: restore.showSidebar,
-      showAIPanel: restore.showAIPanel
+      showSidebar,
+      showAIPanel
     })
   },
 

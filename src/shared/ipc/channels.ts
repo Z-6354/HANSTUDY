@@ -24,7 +24,9 @@ export const IPC = {
     openFile: 'dialog:openFile',
     openFolder: 'dialog:openFolder',
     importFiles: 'dialog:importFiles',
-    saveMarkdown: 'dialog:saveMarkdown'
+    saveMarkdown: 'dialog:saveMarkdown',
+    saveJson: 'dialog:saveJson',
+    openJson: 'dialog:openJson'
   },
   localLibrary: {
     list: 'localLibrary:list',
@@ -41,7 +43,8 @@ export const IPC = {
     createFolder: 'fs:createFolder',
     delete: 'fs:delete',
     rename: 'fs:rename',
-    getDocumentContext: 'fs:getDocumentContext'
+    getDocumentContext: 'fs:getDocumentContext',
+    getAiChatDocumentContext: 'fs:getAiChatDocumentContext'
   },
   notes: {
     getRoot: 'notes:getRoot',
@@ -66,7 +69,8 @@ export const IPC = {
     rename: 'notebooks:rename',
     delete: 'notebooks:delete',
     linkDoc: 'notebooks:linkDoc',
-    importLegacy: 'notebooks:importLegacy'
+    importLegacy: 'notebooks:importLegacy',
+    importNotebook: 'notebooks:importNotebook'
   },
   settings: {
     get: 'settings:get',
@@ -83,6 +87,7 @@ export const IPC = {
     disable: 'skills:disable',
     reload: 'skills:reload',
     install: 'skills:install',
+    delete: 'skills:delete',
     openDir: 'skills:openDir',
     setProjectDir: 'skills:setProjectDir'
   },

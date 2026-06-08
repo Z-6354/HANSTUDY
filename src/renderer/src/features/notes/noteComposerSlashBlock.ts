@@ -1,6 +1,7 @@
 import { EDITABLE_BLOCK_PAD } from './noteComposerContent'
 import {
   defaultCaretSelector,
+  type NoteSlashBlockKind,
   type NoteSlashCommand
 } from './noteSlashRegistry'
 

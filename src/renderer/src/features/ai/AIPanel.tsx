@@ -1,29 +1,48 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import {
+  ChevronLeft,
   ChevronRight,
   FileText,
   History,
   Loader2,
   MessageSquarePlus,
+  NotebookPen,
   Paperclip,
   Pause,
   Send,
-  NotebookPen,
+  StickyNote,
   Trash2,
   X
 } from 'lucide-react'
 import { estimateTokens, getContextWindowForModel, getSystemPromptForMode } from '@shared/chatModes'
 import { getModelMeta } from '@shared/aiProviders'
 import { AskAIHint } from '../reader/selection/SelectionToolbar'
+import { navigateToChatContextItem, prepareLayoutChangeForNoteFocus } from '../notes/navigateToNoteEntry'
+import type { ChatContextItem, ChatContextSnapshot } from '@shared/aiContext'
+import {
+  canNavigateContextSnapshot,
+  collectSessionContextNotes,
+  formatContextChipLabel,
+  mergeChatContextItems,
+  snapshotChatContextItems,
+  snapshotToContextItem
+} from '@shared/aiContext'
+import {
+  findPrecedingUserMessage,
+  formatAiExchangeNoteMarkdown,
+  formatAiSessionNoteMarkdown
+} from '@shared/aiNoteMarkdown'
+import type { SavedDocumentType } from '@shared/readingProgress'
+import type { AISettings, ChatMessage } from '../../types/global.d'
 import { AIMessageBubble } from './AIMessageBubble'
 import { ChatModeSelector } from './ChatModeSelector'
+import { AISkillMenu } from './AISkillMenu'
 import { ContextUsageRing } from './ContextUsageRing'
 import { HitlApprovalModal } from './HitlApprovalModal'
 import { ToolCallBubble, type ToolStep } from './ToolCallBubble'
 import { IconButton } from '../../components/IconButton'
 import { useChatStore } from '../../stores/chatStore'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
-import type { AISettings } from '../../types/global.d'
 
 function genId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -42,6 +61,18 @@ function formatSessionTime(iso: string): string {
   return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
 }
 
+function formatContextLabels(items?: ChatContextSnapshot[]): string[] {
+  if (!items?.length) return []
+  return items.map((item) => formatContextChipLabel(item))
+}
+
+function attachDocSavedType(type: string): SavedDocumentType {
+  if (type === 'txt' || type === 'md' || type === 'pdf' || type === 'docx' || type === 'web') {
+    return type
+  }
+  return 'unknown'
+}
+
 export function AIPanel(): JSX.Element {
   const {
     documents,
@@ -49,15 +80,15 @@ export function AIPanel(): JSX.Element {
     selection,
     aiDraft,
     setAiDraft,
-    chatAttachedDoc,
-    chatDocContext,
-    attachDocumentToChat,
-    detachDocumentFromChat,
-    activeNotePath,
-    setActiveNotePath,
-    setWorkbenchMode,
-    setSidebarTab,
-    closeAIPanel
+    chatContextItems,
+    addChatContextItem,
+    removeChatContextItem,
+    clearChatContextItems,
+    getMergedChatContext,
+    requestNoteInsert,
+    openAIPanel,
+    closeAIPanel,
+    dispatchReaderNavigate
   } = useWorkspaceStore()
   const activeDoc = documents.find((d) => d.id === activeDocumentId)
 
@@ -80,7 +111,6 @@ export function AIPanel(): JSX.Element {
     updateStreamToolSteps,
     isSessionStreaming,
     toggleExcludedSkill,
-    clearExcludedSkills,
     switchSessionForDoc
   } = useChatStore()
 
@@ -88,18 +118,25 @@ export function AIPanel(): JSX.Element {
   const chatMode = activeSession?.mode ?? 'chat'
   const messages = messagesByDoc[activeSessionId] ?? []
   const activeStream = useChatStore((s) => s.activeStreams[activeSessionId])
-  const excludedSkills =
-    useChatStore((s) => s.sessions.find((x) => x.id === activeSessionId)?.excludedSkills) ?? []
+  const globalExcludedSkills = useChatStore((s) => s.globalExcludedSkills)
   const isStreamingActiveSession = isSessionStreaming(activeSessionId)
 
   const [input, setInput] = useState('')
   const [attachError, setAttachError] = useState<string | null>(null)
   const [attaching, setAttaching] = useState(false)
   const [aiSettings, setAiSettings] = useState<AISettings | null>(null)
+  const [historyContextMenu, setHistoryContextMenu] = useState<{
+    x: number
+    y: number
+    sessionId: string
+  } | null>(null)
+  const [messageContextMenu, setMessageContextMenu] = useState<{
+    x: number
+    y: number
+    messageId: string
+  } | null>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const abortedRequestsRef = useRef<Set<string>>(new Set())
-  const [insertFeedback, setInsertFeedback] = useState<string | null>(null)
-  const [activeSkills, setActiveSkills] = useState<Array<{ name: string; description: string }>>([])
   const [enabledSkills, setEnabledSkills] = useState<Array<{ name: string; description: string }>>([])
   const [hitlQueue, setHitlQueue] = useState<
     Array<{
@@ -110,6 +147,9 @@ export function AIPanel(): JSX.Element {
     }>
   >([])
   const hitlPending = hitlQueue[0] ?? null
+
+  const mergedContext = getMergedChatContext()
+  const mergedContextText = mergedContext?.content ?? ''
 
   const drainHitlForRequest = (requestId: string): void => {
     setHitlQueue((q) => q.filter((h) => h.chatRequestId !== requestId))
@@ -122,13 +162,18 @@ export function AIPanel(): JSX.Element {
 
   useEffect(() => {
     window.api.settings.getRaw().then(setAiSettings)
-    void window.api.skills.list().then((list) => {
-      setEnabledSkills(
-        list
-          .filter((skill) => skill.enabled)
-          .map((skill) => ({ name: skill.name, description: skill.description }))
-      )
-    })
+    const refreshSkills = (): void => {
+      void window.api.skills.list().then((list) => {
+        setEnabledSkills(
+          list
+            .filter((skill) => skill.enabled)
+            .map((skill) => ({ name: skill.name, description: skill.description }))
+        )
+      })
+    }
+    refreshSkills()
+    window.addEventListener('focus', refreshSkills)
+    return () => window.removeEventListener('focus', refreshSkills)
   }, [])
 
   useEffect(() => {
@@ -138,14 +183,24 @@ export function AIPanel(): JSX.Element {
     }
   }, [aiDraft, setAiDraft])
 
+  useEffect(() => {
+    if (!historyContextMenu && !messageContextMenu) return
+    const close = (): void => {
+      setHistoryContextMenu(null)
+      setMessageContextMenu(null)
+    }
+    window.addEventListener('mousedown', close)
+    return () => window.removeEventListener('mousedown', close)
+  }, [historyContextMenu, messageContextMenu])
+
   const contextUsage = useMemo(() => {
     const modelId = aiSettings?.model ?? 'deepseek-v4-flash'
     const meta = getModelMeta(modelId)
     const maxTokens = meta?.contextWindow ?? getContextWindowForModel(modelId)
 
     let text = getSystemPromptForMode(chatMode)
-    if (chatDocContext) {
-      text += `\n${chatDocContext}`
+    if (mergedContextText) {
+      text += `\n${mergedContextText}`
     }
     if (selection?.text) {
       text += `\n${selection.text}`
@@ -164,7 +219,7 @@ export function AIPanel(): JSX.Element {
   }, [
     aiSettings?.model,
     chatMode,
-    chatDocContext,
+    mergedContextText,
     selection?.text,
     messages,
     input
@@ -184,10 +239,9 @@ export function AIPanel(): JSX.Element {
       )
       updateMessage(sessionId, stream.assistantId, (current?.content ?? '') + chunk)
     })
-    const offDone = window.api.ai.onStreamDone((requestId, _full, skills) => {
+    const offDone = window.api.ai.onStreamDone((requestId) => {
       const sessionId = useChatStore.getState().getSessionForRequest(requestId)
       if (!sessionId) return
-      if (skills?.length && sessionId === activeSessionId) setActiveSkills(skills)
       finishStream(requestId)
       abortedRequestsRef.current.delete(requestId)
     })
@@ -254,18 +308,101 @@ export function AIPanel(): JSX.Element {
     }
   }, [activeSessionId, finishStream, updateMessage, updateStreamToolSteps])
 
+  const attachableDoc =
+    activeDoc &&
+    activeDoc.type !== 'settings' &&
+    activeDoc.type !== 'web' &&
+    (activeDoc.type === 'txt' || activeDoc.type === 'md')
+      ? activeDoc
+      : null
+
   const handleAttachActiveDoc = async (): Promise<void> => {
-    if (!activeDoc || activeDoc.type === 'settings' || activeDoc.type === 'web' || attaching) return
+    if (!attachableDoc || attaching) return
     setAttaching(true)
     setAttachError(null)
     try {
-      const ctx = await window.api.fs.getDocumentContext(activeDoc.path)
-      attachDocumentToChat(activeDoc.path, activeDoc.name, ctx.content)
+      const progress = await window.api.readingProgress.get(attachableDoc.path)
+      const ctx = await window.api.fs.getAiChatDocumentContext(attachableDoc.path, {
+        monacoLine: progress?.monacoLine,
+        scrollRatio: progress?.scrollRatio
+      })
+      const hint = ctx.sectionTitle ? `章节：${ctx.sectionTitle}` : undefined
+      addChatContextItem({
+        kind: 'document',
+        label: attachableDoc.name,
+        content: ctx.content,
+        hint,
+        docPath: attachableDoc.path,
+        anchor: {
+          docPath: attachableDoc.path,
+          docType: attachDocSavedType(attachableDoc.type),
+          docName: attachableDoc.name,
+          monacoLine: progress?.monacoLine,
+          scrollRatio: progress?.scrollRatio
+        }
+      })
+      openAIPanel()
     } catch (err) {
       setAttachError(err instanceof Error ? err.message : '无法读取文档内容')
     } finally {
       setAttaching(false)
     }
+  }
+
+  const handleContextChipNavigate = (item: ChatContextItem): void => {
+    void navigateToChatContextItem(item, dispatchReaderNavigate).catch((err: Error) => {
+      setAttachError(err.message || '无法跳转到笔记')
+    })
+  }
+
+  const handleSnapshotNavigate = (item: ChatContextSnapshot): void => {
+    handleContextChipNavigate(snapshotToContextItem(item))
+  }
+
+  const handleHistoryNoteNavigate = (
+    sessionId: string,
+    note: ChatContextSnapshot,
+    e: MouseEvent
+  ): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    prepareLayoutChangeForNoteFocus()
+    if (sessionId !== activeSessionId) switchSession(sessionId)
+    handleSnapshotNavigate(note)
+  }
+
+  const canNavigateContextItem = (item: ChatContextItem): boolean =>
+    canNavigateContextSnapshot(item)
+
+  const buildAssistantNoteMarkdown = (assistantMsg: ChatMessage): string => {
+    const userMsg = findPrecedingUserMessage(messages, assistantMsg.id)
+    const session = sessions.find((s) => s.id === activeSessionId)
+    return formatAiExchangeNoteMarkdown({
+      question: userMsg?.content,
+      answer: assistantMsg.content,
+      sessionTitle: session?.title,
+      contextLabels: formatContextLabels(userMsg?.contextItems)
+    })
+  }
+
+  const handleInsertAssistantToNote = (assistantMsg: ChatMessage): void => {
+    if (!assistantMsg.content.trim()) return
+    const session = sessions.find((s) => s.id === activeSessionId)
+    requestNoteInsert(
+      buildAssistantNoteMarkdown(assistantMsg),
+      session?.title ?? 'AI 对话',
+      activeSessionId
+    )
+  }
+
+  const handleInsertSessionToNote = (sessionId: string): void => {
+    const session = sessions.find((s) => s.id === sessionId)
+    const sessionMessages = messagesByDoc[sessionId] ?? []
+    requestNoteInsert(
+      formatAiSessionNoteMarkdown(sessionMessages, session?.title),
+      session?.title ?? '历史对话',
+      sessionId
+    )
   }
 
   const handleSend = async (): Promise<void> => {
@@ -279,15 +416,21 @@ export function AIPanel(): JSX.Element {
 
     const sessionId = activeSessionId
 
+    const sentContextItems = chatContextItems
+    const contextSnapshot = snapshotChatContextItems(sentContextItems)
+    const documentContext = mergeChatContextItems(sentContextItems)
+
     const userMsg = {
       id: genId(),
       role: 'user' as const,
       content: text,
       createdAt: new Date().toISOString(),
-      contextText: selectionText
+      contextText: selectionText,
+      contextItems: contextSnapshot.length > 0 ? contextSnapshot : undefined
     }
     addMessage(sessionId, userMsg)
     setInput('')
+    if (sentContextItems.length > 0) clearChatContextItems()
 
     const assistantId = genId()
     addMessage(sessionId, {
@@ -301,11 +444,6 @@ export function AIPanel(): JSX.Element {
     const requestId = genId()
     startStream(sessionId, requestId, assistantId)
 
-    const documentContext =
-      chatAttachedDoc && chatDocContext
-        ? { fileName: chatAttachedDoc.name, content: chatDocContext }
-        : undefined
-
     try {
       await window.api.ai.chat(
         requestId,
@@ -313,7 +451,7 @@ export function AIPanel(): JSX.Element {
         selectionText,
         documentContext,
         chatMode,
-        excludedSkills
+        globalExcludedSkills
       )
     } catch (err) {
       const message = err instanceof Error ? err.message : '发送失败'
@@ -322,28 +460,20 @@ export function AIPanel(): JSX.Element {
     }
   }
 
-  const handleInsertToNote = async (content: string): Promise<void> => {
-    if (!content.trim()) return
-    setInsertFeedback(null)
-    try {
-      let notePath = activeNotePath
-      if (!notePath) {
-        const root = await window.api.notes.getRoot()
-        const title = `AI-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}`
-        notePath = await window.api.notes.createFile(root, title)
-        setActiveNotePath(notePath)
-        setWorkbenchMode('compose')
-        setSidebarTab('notes')
-      }
-      const block = selection?.text
-        ? `> ${selection.text.slice(0, 200).replace(/\n/g, '\n> ')}\n\n${content.trim()}`
-        : content.trim()
-      await window.api.notes.append(notePath, block)
-      setInsertFeedback('已写入笔记')
-      window.setTimeout(() => setInsertFeedback(null), 2000)
-    } catch (err) {
-      setInsertFeedback(err instanceof Error ? err.message : '写入笔记失败')
-    }
+  const handleInsertToNote = (assistantMsg: ChatMessage): void => {
+    handleInsertAssistantToNote(assistantMsg)
+  }
+
+  const handleHistoryContextMenu = (e: MouseEvent, sessionId: string): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    setHistoryContextMenu({ x: e.clientX, y: e.clientY, sessionId })
+  }
+
+  const handleMessageContextMenu = (e: MouseEvent, messageId: string): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    setMessageContextMenu({ x: e.clientX, y: e.clientY, messageId })
   }
 
   const handlePause = (): void => {
@@ -374,103 +504,117 @@ export function AIPanel(): JSX.Element {
     deleteSession(sessionId)
   }
 
-  const canInsertToNote = true
-  const readableActiveDoc =
-    activeDoc && activeDoc.type !== 'settings' && activeDoc.type !== 'web' ? activeDoc : null
+  const handleSelectHistorySession = (sessionId: string): void => {
+    switchSession(sessionId)
+  }
 
   return (
-    <div className={`ai-panel ${showHistory ? 'with-history' : ''}`}>
-      {showHistory && (
-        <div className="ai-history-panel">
-          <div className="ai-history-header">
-            <span>历史对话</span>
-            <IconButton icon={X} label="关闭历史" onClick={toggleHistory} />
-          </div>
-          <div className="ai-history-list">
-            {sessions.map((session) => (
-              <div
-                key={session.id}
-                className={`ai-history-item ${session.id === activeSessionId ? 'active' : ''}`}
-              >
-                <button
-                  type="button"
-                  className="ai-history-item-main"
-                  onClick={() => switchSession(session.id)}
-                >
-                  <span className="ai-history-title">{session.title}</span>
-                  <span className="ai-history-time">{formatSessionTime(session.updatedAt)}</span>
-                </button>
-                <IconButton
-                  icon={Trash2}
-                  label="删除对话"
-                  size={14}
-                  className="ai-history-delete"
-                  onClick={() => handleDeleteSession(session.id)}
-                />
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="ai-panel-main">
-        <div className="ai-panel-header">
-          <span>AI 助手</span>
-          <div className="ai-panel-actions">
-            <IconButton icon={MessageSquarePlus} label="新增对话" onClick={() => createSession()} />
-            <IconButton
-              icon={History}
-              label="历史对话"
-              active={showHistory}
-              onClick={toggleHistory}
-            />
-            <IconButton
-              icon={Trash2}
-              label="清空当前对话"
-              onClick={() => handleClearSession(activeSessionId)}
-            />
-            <IconButton
-              icon={ChevronRight}
-              label="收起 AI 助手"
-              size={14}
-              className="ai-panel-collapse-btn"
-              onClick={closeAIPanel}
-            />
-          </div>
-        </div>
-
-        <div className="ai-context-bar">
-          {chatAttachedDoc ? (
-            <div className="ai-context-chip">
-              <FileText size={14} aria-hidden />
-              <span>{chatAttachedDoc.name}</span>
-              <IconButton icon={X} label="移出对话" size={14} onClick={detachDocumentFromChat} />
-            </div>
-          ) : readableActiveDoc ? (
-            <IconButton
-              icon={attaching ? Loader2 : Paperclip}
-              label={
-                attaching
-                  ? '读取中...'
-                  : `将「${readableActiveDoc.name}」加入对话`
-              }
-              className={`ai-attach-btn ${attaching ? 'spinning' : ''}`}
-              disabled={attaching}
-              onClick={() => void handleAttachActiveDoc()}
-            />
+    <div className="ai-panel">
+      <div className="ai-panel-header">
+        <div className="ai-panel-header-main">
+          {showHistory ? (
+            <>
+              <IconButton
+                icon={ChevronLeft}
+                label="返回对话"
+                size={14}
+                className="ai-history-back-btn"
+                onClick={toggleHistory}
+              />
+              <span className="ai-panel-title">历史对话</span>
+            </>
           ) : (
-            <span className="ai-context-hint">未加入文档，可直接对话</span>
+            <span className="ai-panel-title">AI 助手</span>
           )}
-          {attachError && <span className="ai-context-error">{attachError}</span>}
-          {insertFeedback && <span className="ai-insert-feedback">{insertFeedback}</span>}
         </div>
+        <div className="ai-panel-actions">
+          {!showHistory && (
+            <>
+              <IconButton icon={MessageSquarePlus} label="新增对话" onClick={() => createSession()} />
+              <IconButton
+                icon={History}
+                label="历史对话"
+                active={showHistory}
+                onClick={toggleHistory}
+              />
+              <IconButton
+                icon={Trash2}
+                label="清空当前对话"
+                onClick={() => handleClearSession(activeSessionId)}
+              />
+            </>
+          )}
+          <IconButton
+            icon={ChevronRight}
+            label="收起 AI 助手"
+            size={14}
+            className="ai-panel-collapse-btn"
+            onClick={closeAIPanel}
+          />
+        </div>
+      </div>
 
-        <AskAIHint />
+      {showHistory ? (
+        <div className="ai-history-view">
+          <div className="ai-history-list">
+            {sessions.length === 0 ? (
+              <p className="ai-history-empty">暂无历史对话</p>
+            ) : (
+              sessions.map((session) => {
+              const sessionNotes = collectSessionContextNotes(
+                messagesByDoc[session.id] ?? []
+              )
+              return (
+                <div
+                  key={session.id}
+                  className={`ai-history-item ${session.id === activeSessionId ? 'active' : ''}`}
+                  onContextMenu={(e) => handleHistoryContextMenu(e, session.id)}
+                >
+                  <button
+                    type="button"
+                    className="ai-history-item-main"
+                    onClick={() => handleSelectHistorySession(session.id)}
+                  >
+                    <span className="ai-history-title">{session.title}</span>
+                    {sessionNotes.length > 0 && (
+                      <div className="ai-history-notes">
+                        {sessionNotes.map((note) => (
+                          <button
+                            key={note.noteEntryId ?? note.label}
+                            type="button"
+                            className="ai-history-note-tag"
+                            title={`${formatContextChipLabel(note)} · 点击跳转`}
+                            onClick={(e) => handleHistoryNoteNavigate(session.id, note, e)}
+                          >
+                            <StickyNote size={10} aria-hidden />
+                            <span>{formatContextChipLabel(note)}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <span className="ai-history-time">{formatSessionTime(session.updatedAt)}</span>
+                  </button>
+                  <IconButton
+                    icon={Trash2}
+                    label="删除对话"
+                    size={14}
+                    className="ai-history-delete"
+                    onClick={() => handleDeleteSession(session.id)}
+                  />
+                </div>
+              )
+            })
+            )}
+          </div>
+        </div>
+      ) : (
+        <>
+          <AskAIHint />
 
-        <div className="ai-panel-body" ref={bodyRef}>
+          <div className="ai-panel-body" ref={bodyRef}>
           {messages.length === 0 && (
             <p className="ai-placeholder">
-              无需打开文档即可提问。打开文件后，可点击上方按钮将文档加入对话。
+              无需打开文档即可提问。笔记引用可点击跳转到对应笔记本中的笔记节点。
             </p>
           )}
           {messages.map((msg) => {
@@ -489,6 +633,15 @@ export function AIPanel(): JSX.Element {
               content={msg.content}
               isError={msg.isError}
               isStreaming={streamingThis}
+              contextItems={msg.role === 'user' ? msg.contextItems : undefined}
+              onContextItemNavigate={
+                msg.role === 'user' ? handleSnapshotNavigate : undefined
+              }
+              onContextMenu={
+                msg.role === 'assistant' && msg.content && !streamingThis && !msg.isError
+                  ? (e) => handleMessageContextMenu(e, msg.id)
+                  : undefined
+              }
             >
               {msg.role === 'assistant' &&
                 (toolSteps?.length ?? 0) > 0 &&
@@ -505,14 +658,13 @@ export function AIPanel(): JSX.Element {
               {msg.role === 'assistant' &&
                 msg.content &&
                 !streamingThis &&
-                !msg.isError &&
-                canInsertToNote && (
+                !msg.isError && (
                 <IconButton
                   icon={NotebookPen}
-                  label="写入笔记"
+                  label="加入笔记"
                   className="ai-insert-btn"
                   size={14}
-                  onClick={() => void handleInsertToNote(msg.content)}
+                  onClick={() => handleInsertToNote(msg)}
                 />
               )}
             </AIMessageBubble>
@@ -521,35 +673,85 @@ export function AIPanel(): JSX.Element {
         </div>
 
         <div className="ai-panel-input">
-          {(enabledSkills.length > 0 || activeSkills.length > 0) && (
-            <div className="ai-skill-bar">
-              {(enabledSkills.length ? enabledSkills : activeSkills).map((skill) => {
-                const isActive = activeSkills.some((item) => item.name === skill.name)
-                const isExcluded = excludedSkills.includes(skill.name)
-                return (
-                  <button
-                    key={skill.name}
-                    type="button"
-                    className={`ai-skill-chip ${isActive ? 'active' : ''} ${isExcluded ? 'excluded' : ''}`}
-                    title={skill.description}
-                    onClick={() => toggleExcludedSkill(activeSessionId, skill.name)}
-                  >
-                    {skill.name}
-                    {isExcluded ? '（已跳过）' : ''}
-                  </button>
-                )
-              })}
-              {excludedSkills.length > 0 && (
-                <button
-                  type="button"
-                  className="ai-skill-reset"
-                  onClick={() => clearExcludedSkills(activeSessionId)}
-                >
-                  恢复全部
-                </button>
-              )}
+          <div className="ai-composer-bar">
+            <div className="ai-composer-toolbar">
+              <ChatModeSelector
+                mode={chatMode}
+                onChange={(mode) => setSessionMode(activeSessionId, mode)}
+              />
+              <AISkillMenu
+                skills={enabledSkills}
+                excludedSkills={globalExcludedSkills}
+                onToggle={toggleExcludedSkill}
+              />
             </div>
-          )}
+            {(chatContextItems.length > 0 || attachableDoc) && (
+              <div className="ai-composer-context">
+                {chatContextItems.map((item) => {
+                  const chipLabel = formatContextChipLabel(item)
+                  const chipTitle =
+                    item.kind === 'note'
+                      ? chipLabel
+                      : item.hint
+                        ? `${item.label} · ${item.hint}`
+                        : item.label
+                  const clickable = canNavigateContextItem(item)
+                  return (
+                    <div
+                      key={item.id}
+                      className={`ai-context-chip${clickable ? ' ai-context-chip--clickable' : ''}`}
+                      role={clickable ? 'button' : undefined}
+                      tabIndex={clickable ? 0 : undefined}
+                      title={clickable ? `${chipTitle} · 点击跳转` : chipTitle}
+                      onClick={
+                        clickable
+                          ? () => handleContextChipNavigate(item)
+                          : undefined
+                      }
+                      onKeyDown={
+                        clickable
+                          ? (e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault()
+                                handleContextChipNavigate(item)
+                              }
+                            }
+                          : undefined
+                      }
+                    >
+                      {item.kind === 'note' ? (
+                        <StickyNote size={14} aria-hidden />
+                      ) : (
+                        <FileText size={14} aria-hidden />
+                      )}
+                      <span>{chipLabel}</span>
+                      <IconButton
+                        icon={X}
+                        label="移出对话"
+                        size={14}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          removeChatContextItem(item.id)
+                        }}
+                      />
+                    </div>
+                  )
+                })}
+                {attachableDoc && (
+                  <IconButton
+                    icon={attaching ? Loader2 : Paperclip}
+                    label={
+                      attaching ? '读取中...' : `将「${attachableDoc.name}」当前章节加入对话`
+                    }
+                    className={`ai-attach-btn ${attaching ? 'spinning' : ''}`}
+                    disabled={attaching}
+                    onClick={() => void handleAttachActiveDoc()}
+                  />
+                )}
+              </div>
+            )}
+          </div>
+          {attachError && <span className="ai-context-error">{attachError}</span>}
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -568,10 +770,6 @@ export function AIPanel(): JSX.Element {
             }}
           />
           <div className="ai-input-footer">
-            <ChatModeSelector
-              mode={chatMode}
-              onChange={(mode) => setSessionMode(activeSessionId, mode)}
-            />
             <div className="ai-input-actions">
               <ContextUsageRing
                 usedTokens={contextUsage.usedTokens}
@@ -596,7 +794,52 @@ export function AIPanel(): JSX.Element {
             </div>
           </div>
         </div>
-      </div>
+        </>
+      )}
+
+      {historyContextMenu && (
+        <div
+          className="context-menu ai-history-context-menu"
+          style={{ left: historyContextMenu.x, top: historyContextMenu.y }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            onMouseDown={(e) => {
+              e.preventDefault()
+              handleInsertSessionToNote(historyContextMenu.sessionId)
+              setHistoryContextMenu(null)
+            }}
+          >
+            <NotebookPen size={14} />
+            加入笔记
+          </button>
+        </div>
+      )}
+
+      {messageContextMenu && (
+        <div
+          className="context-menu ai-message-context-menu"
+          style={{ left: messageContextMenu.x, top: messageContextMenu.y }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            onMouseDown={(e) => {
+              e.preventDefault()
+              const msg = messages.find((m) => m.id === messageContextMenu.messageId)
+              if (msg?.role === 'assistant' && msg.content.trim()) {
+                handleInsertAssistantToNote(msg)
+              }
+              setMessageContextMenu(null)
+            }}
+          >
+            <NotebookPen size={14} />
+            加入笔记
+          </button>
+        </div>
+      )}
+
       {hitlPending && (
         <HitlApprovalModal
           toolName={hitlPending.toolName}

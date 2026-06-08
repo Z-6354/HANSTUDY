@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect } from 'react'
 import { Workbench } from './ui/layout/Workbench'
 import { TitleBar } from './ui/layout/TitleBar'
-import { useMaximizeLayout } from './hooks/useMaximizeLayout'
 import { usePageZoomGuard } from './hooks/usePageZoomGuard'
 import { useWorkspaceSessionPersist } from './hooks/useWorkspaceSessionPersist'
 import { useAppSettingsStore } from './stores/appSettingsStore'
@@ -16,7 +15,6 @@ export default function App(): JSX.Element {
   const exitFocusMode = useWorkspaceStore((s) => s.exitFocusMode)
 
   useWorkspaceSessionPersist()
-  useMaximizeLayout()
   usePageZoomGuard()
 
   useEffect(() => {

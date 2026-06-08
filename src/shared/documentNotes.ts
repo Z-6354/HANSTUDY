@@ -17,6 +17,8 @@ export interface DocumentNoteAnchor {
   mdViewMode?: 'preview' | 'source'
   /** 添加时选中的原文摘录（可选） */
   quoteText?: string
+  /** AI 对话 session id（docPath 为 __hanstudy_ai__ 时用于跳回历史） */
+  aiSessionId?: string
 }
 
 export interface DocumentNoteEntry {

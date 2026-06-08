@@ -1,3 +1,5 @@
+import type { ChatContextSnapshot } from './aiContext'
+
 export interface TextRange {
   startLine: number
   startColumn: number
@@ -32,6 +34,8 @@ export interface ChatMessage {
   content: string
   createdAt: string
   contextText?: string
+  /** 发送时附带的笔记 / 文档引用（不含正文） */
+  contextItems?: ChatContextSnapshot[]
   /** API 失败等错误信息，以助手气泡展示 */
   isError?: boolean
   /** Agent 模式工具调用步骤（流式结束后保留） */

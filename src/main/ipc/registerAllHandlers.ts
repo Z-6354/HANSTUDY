@@ -28,6 +28,7 @@ import {
   deleteNotebook,
   getNotebook,
   importLegacyThreadIfNeeded,
+  importNotebook,
   linkDocumentToNotebook,
   listNotebooks,
   renameNotebook,
@@ -44,6 +45,7 @@ import {
 } from '../infra/readingProgressService'
 import { getAISettings, normalizeApiKey, saveAISettings, streamChat } from '../llm/aiService'
 import {
+  deleteSkill,
   disableSkill,
   enableSkill,
   getUserSkillsDir,
@@ -62,6 +64,7 @@ import {
   importFilesToDirectory,
   isSupportedDocumentPath,
   listDirectory,
+  getAiChatDocumentContext,
   getDocumentContext,
   readBinaryFile,
   readTextFile,
@@ -217,6 +220,28 @@ export function registerAllHandlers(): void {
     return true
   })
 
+  ipcRegistry.register(IPC.dialog.saveJson, async (content: unknown, defaultName: unknown) => {
+    const result = await dialog.showSaveDialog(ctx.mainWindow!, {
+      defaultPath: String(defaultName ?? 'notebook.json'),
+      filters: [{ name: 'JSON', extensions: ['json'] }]
+    })
+    if (result.canceled || !result.filePath) return false
+    await writeFile(result.filePath, String(content ?? ''), 'utf-8')
+    return true
+  })
+
+  ipcRegistry.register(IPC.dialog.openJson, async () => {
+    const result = await dialog.showOpenDialog(ctx.mainWindow!, {
+      properties: ['openFile'],
+      filters: [{ name: 'JSON', extensions: ['json'] }]
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    const filePath = result.filePaths[0]!
+    const { readFile: readFileFs } = await import('node:fs/promises')
+    const content = await readFileFs(filePath, 'utf-8')
+    return { path: filePath, content }
+  })
+
   ipcRegistry.register(IPC.fs.listDirectory, async (dirPath: unknown) => listDirectory(String(dirPath)))
   ipcRegistry.register(IPC.fs.readText, async (filePath: unknown) =>
     readTextDocument(String(filePath))
@@ -261,6 +286,11 @@ export function registerAllHandlers(): void {
   })
   ipcRegistry.register(IPC.fs.getDocumentContext, async (filePath: unknown) =>
     getDocumentContext(String(filePath))
+  )
+  ipcRegistry.register(
+    IPC.fs.getAiChatDocumentContext,
+    async (filePath: unknown, options: unknown) =>
+      getAiChatDocumentContext(String(filePath), (options ?? {}) as import('../infra/fileService').DocumentContextOptions)
   )
 
   ipcRegistry.register(IPC.notes.getRoot, async () => ensureNotesRoot())
@@ -320,6 +350,9 @@ export function registerAllHandlers(): void {
   ipcRegistry.register(IPC.notebooks.importLegacy, async (notebookId: unknown, docPath: unknown) =>
     importLegacyThreadIfNeeded(String(notebookId), String(docPath))
   )
+  ipcRegistry.register(IPC.notebooks.importNotebook, async (notebook: unknown) =>
+    importNotebook(notebook as import('../../shared/notebooks').Notebook)
+  )
 
   ipcRegistry.register(IPC.settings.get, async () => {
     const settings = await getAISettings()
@@ -370,6 +403,10 @@ export function registerAllHandlers(): void {
     if (result.canceled || result.filePaths.length === 0) return null
     const name = await installSkill(result.filePaths[0])
     return { name, skills: await listSkills() }
+  })
+  ipcRegistry.register(IPC.skills.delete, async (name: unknown) => {
+    await deleteSkill(String(name))
+    return listSkills()
   })
   ipcRegistry.register(IPC.skills.openDir, async () => {
     const dir = getUserSkillsDir()

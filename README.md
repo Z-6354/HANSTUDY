@@ -1,41 +1,41 @@
 # HAN Study Reader
 
-VS Code / Cursor 风格的文档阅读器，支持 TXT、Markdown、PDF、Word 阅读，标注笔记与 AI 助手。
+**AI 对话 + 笔记本** 学习桌面应用，VS Code / Cursor 风格布局。  
+当前版本：**0.1.0**（预览版）
 
-## 功能
+## 功能概览
 
-### 阅读器
+### 阅读
 
 | 格式 | 说明 |
 |------|------|
-| `.txt` | 纯文本，Monaco 只读 |
-| `.md` / `README.md` | **预览 / 文本双模式**，默认预览 |
+| `.txt` | Monaco 只读 |
+| `.md` | 预览 / 源码双模式 |
 | `.pdf` | pdf.js 分页，Ctrl+滚轮缩放 |
-| `.docx` | Word 简化 HTML 视图 |
+| `.docx` | Word 简化 HTML |
+| 网页 | 内置 WebViewer |
 
-### 标注与笔记（Phase 2）
+### 笔记本（记笔记模式）
 
-- 选中文本 → 浮动工具条：**高亮**、**下划线**、**便签**、**Ask AI**
-- 左侧 **标注** 面板：查看当前文档全部标注，点击跳转
-- PDF：工具栏「添加便签」→ 点击页面放置便签
-- 导出标注为 Markdown（标注面板 ⬇ 按钮）
+- **多笔记本**：条目与文档解耦，自动关联已打开文档
+- 层级树、拖动排序、锚点跳转（PDF 页码 / TXT·MD 行号）
+- `/` 命令与格式工具栏；笔记本 **导出 / 导入 JSON**
 
-### AI 助手（Phase 3）
+### AI 助手
 
-- 右侧 AI 面板：对话、流式回复
-- 选中文本 → **Ask AI** 自动带入上下文
-- AI 回复可 **插入便签**
-- **帮助 → AI 设置**：配置 API Base URL、Model、API Key（本机加密存储）
-- 兼容 OpenAI 格式 API（含国内中转）
+- 流式多会话；**历史对话** 与当前对话页内切换
+- 笔记 / 文档 **上下文 chip**（发送后显示在消息下，可跳转）
+- **Skill** 菜单与设置页管理；Agent + MCP
+- 回复或历史 **加入笔记**（自动包含提问与引用）
+- AI 笔记可 **跳回对应对话**
 
 ### 快捷键
 
 | 快捷键 | 功能 |
 |--------|------|
 | `Ctrl+O` | 打开文件 |
-| `Ctrl+Shift+V` | Markdown 预览/文本切换 |
 | `Ctrl+Shift+A` | 显示/隐藏 AI 面板 |
-| `Ctrl+Shift+N` | 打开标注面板 |
+| `Ctrl+Shift+V` | Markdown 预览/源码切换 |
 
 ## 开发
 
@@ -44,7 +44,12 @@ npm install
 npm run dev
 ```
 
-若 Electron 下载失败：
+```bash
+npm run typecheck
+npm run test
+```
+
+Electron 下载失败时可设镜像：
 
 ```powershell
 $env:ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
@@ -57,17 +62,27 @@ npm install
 npm run dist:win
 ```
 
+产物：`release/HAN Study Reader-Setup-0.1.0.exe`
+
 ## 技术栈
 
-- Electron + electron-vite + React + TypeScript
-- Monaco Editor（文本 / MD 源码）
-- marked + DOMPurify（MD 预览）
-- pdf.js（PDF）
-- mammoth（DOCX）
-- JSON 本地持久化（标注）+ safeStorage（API Key）
+- Electron + electron-vite + React + TypeScript + Zustand
+- Monaco、marked、pdf.js、mammoth
+- 可选捆绑 Java 后端 + JRE
 
-## 数据存储
+## 数据目录
 
-- 标注：`%APPDATA%/hanstudy-reader/data/annotations.json`
-- AI 设置：`%APPDATA%/hanstudy-reader/data/ai-settings.json`
-- 对话历史：浏览器 localStorage（按文档路径）
+`%APPDATA%/hanstudy-reader/data/`
+
+- 笔记本：`notebooks/`
+- 侧栏 Markdown 笔记：`notes/`
+- AI 设置、Skill、对话历史（localStorage + JSON）
+
+## 文档
+
+- [实现计划](docs/PLAN.md)
+- [变更日志](CHANGELOG.md)
+
+## 仓库
+
+[Z-6354/HANSTUDY](https://github.com/Z-6354/HANSTUDY)

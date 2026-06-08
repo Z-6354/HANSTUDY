@@ -50,7 +50,11 @@ const api = {
       canceled: boolean
     }> => ipcRenderer.invoke('dialog:importFiles', targetDir),
     saveMarkdown: (content: string, defaultName: string): Promise<boolean> =>
-      ipcRenderer.invoke('dialog:saveMarkdown', content, defaultName)
+      ipcRenderer.invoke('dialog:saveMarkdown', content, defaultName),
+    saveJson: (content: string, defaultName: string): Promise<boolean> =>
+      ipcRenderer.invoke(IPC.dialog.saveJson, content, defaultName),
+    openJson: (): Promise<{ path: string; content: string } | null> =>
+      ipcRenderer.invoke(IPC.dialog.openJson)
   },
   localLibrary: {
     list: (): Promise<FileEntry[]> => ipcRenderer.invoke('localLibrary:list'),
@@ -76,6 +80,15 @@ const api = {
       filePath: string
     ): Promise<{ fileName: string; content: string; truncated: boolean }> =>
       ipcRenderer.invoke('fs:getDocumentContext', filePath),
+    getAiChatDocumentContext: (
+      filePath: string,
+      options?: { monacoLine?: number; scrollRatio?: number }
+    ): Promise<{
+      fileName: string
+      content: string
+      truncated: boolean
+      sectionTitle?: string
+    }> => ipcRenderer.invoke(IPC.fs.getAiChatDocumentContext, filePath, options ?? {}),
     createFile: (
       dirPath: string,
       fileName: string
@@ -143,7 +156,11 @@ const api = {
       notebookId: string,
       docPath: string
     ): Promise<import('../shared/notebooks').Notebook | null> =>
-      ipcRenderer.invoke(IPC.notebooks.importLegacy, notebookId, docPath)
+      ipcRenderer.invoke(IPC.notebooks.importLegacy, notebookId, docPath),
+    importNotebook: (
+      notebook: import('../shared/notebooks').Notebook
+    ): Promise<import('../shared/notebooks').Notebook> =>
+      ipcRenderer.invoke(IPC.notebooks.importNotebook, notebook)
   },
   settings: {
     get: (): Promise<AISettings> => ipcRenderer.invoke('settings:get'),
@@ -292,6 +309,7 @@ const api = {
     reload: (): Promise<SkillListItem[]> => ipcRenderer.invoke('skills:reload'),
     install: (): Promise<{ name: string; skills: SkillListItem[] } | null> =>
       ipcRenderer.invoke('skills:install'),
+    delete: (name: string): Promise<SkillListItem[]> => ipcRenderer.invoke('skills:delete', name),
     openDir: (): Promise<string> => ipcRenderer.invoke('skills:openDir'),
     setProjectDir: (rootFolder: string | null): Promise<SkillListItem[]> =>
       ipcRenderer.invoke('skills:setProjectDir', rootFolder)

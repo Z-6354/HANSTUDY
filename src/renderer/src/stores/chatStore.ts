@@ -4,8 +4,32 @@ import type { ChatMessage } from '../types/global.d'
 
 const CHAT_KEY = 'hanstudy-chat-history'
 const SESSIONS_KEY = 'hanstudy-chat-sessions'
+const SKILL_EXCLUDED_KEY = 'hanstudy-ai-skill-excluded'
 
 export const GLOBAL_CHAT_SESSION = '__global__'
+
+function loadGlobalExcludedSkills(): string[] {
+  try {
+    const raw = localStorage.getItem(SKILL_EXCLUDED_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as unknown
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function saveGlobalExcludedSkills(list: string[]): void {
+  try {
+    localStorage.setItem(SKILL_EXCLUDED_KEY, JSON.stringify(list))
+  } catch {
+    // ignore
+  }
+}
+
+function syncSessionsExcludedSkills(sessions: ChatSession[], excluded: string[]): ChatSession[] {
+  return sessions.map((s) => ({ ...s, excludedSkills: excluded }))
+}
 
 export interface ChatToolStep {
   id: string
@@ -118,6 +142,14 @@ function bootstrapSessions(messagesByDoc: Record<string, ChatMessage[]>): {
 }
 
 const boot = bootstrapSessions(loadAll())
+let bootExcluded = loadGlobalExcludedSkills()
+if (bootExcluded.length === 0) {
+  const legacy = boot.sessions.find((s) => (s.excludedSkills?.length ?? 0) > 0)?.excludedSkills
+  if (legacy?.length) {
+    bootExcluded = legacy
+    saveGlobalExcludedSkills(bootExcluded)
+  }
+}
 
 interface ChatState {
   sessions: ChatSession[]
@@ -126,6 +158,8 @@ interface ChatState {
   activeStreams: Record<string, SessionStreamState>
   requestSessionMap: Record<string, string>
   showHistory: boolean
+  /** 全局 Skill 关闭列表（持久化，所有对话共用） */
+  globalExcludedSkills: string[]
   loadForDoc: (sessionId: string) => ChatMessage[]
   addMessage: (sessionId: string, message: ChatMessage) => void
   updateMessage: (
@@ -143,9 +177,8 @@ interface ChatState {
   setSessionMode: (sessionId: string, mode: ChatMode) => void
   getOrCreateSessionForDoc: (docPath: string, docName: string) => string
   switchSessionForDoc: (docPath: string, docName: string) => void
-  getExcludedSkills: (sessionId: string) => string[]
-  toggleExcludedSkill: (sessionId: string, name: string) => void
-  clearExcludedSkills: (sessionId: string) => void
+  getExcludedSkills: () => string[]
+  toggleExcludedSkill: (name: string) => void
   startStream: (sessionId: string, requestId: string, assistantId: string) => void
   finishStream: (requestId: string) => void
   getSessionForRequest: (requestId: string) => string | undefined
@@ -158,12 +191,13 @@ interface ChatState {
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
-  sessions: boot.sessions,
+  sessions: syncSessionsExcludedSkills(boot.sessions, bootExcluded),
   activeSessionId: boot.activeSessionId,
   messagesByDoc: boot.messagesByDoc,
   activeStreams: {},
   requestSessionMap: {},
   showHistory: false,
+  globalExcludedSkills: bootExcluded,
 
   loadForDoc: (sessionId) => get().messagesByDoc[sessionId] ?? [],
 
@@ -214,6 +248,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   createSession: (docPath = null, title = '新对话') => {
     const id = genSessionId()
+    const excludedSkills = [...get().globalExcludedSkills]
     const session: ChatSession = {
       id,
       title,
@@ -221,7 +256,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       docPath,
-      excludedSkills: []
+      excludedSkills
     }
     set((state) => {
       const sessions = [session, ...state.sessions]
@@ -251,16 +286,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => {
       if (state.sessions.length <= 1) {
         get().clearSession(sessionId)
-        const sessions = state.sessions.map((s) =>
-          s.id === sessionId
-            ? {
-                ...s,
-                title: '新对话',
-                docPath: null,
-                excludedSkills: [],
-                updatedAt: new Date().toISOString()
-              }
-            : s
+        const sessions = syncSessionsExcludedSkills(
+          state.sessions.map((s) =>
+            s.id === sessionId
+              ? {
+                  ...s,
+                  title: '新对话',
+                  docPath: null,
+                  updatedAt: new Date().toISOString()
+                }
+              : s
+          ),
+          state.globalExcludedSkills
         )
         saveSessions(sessions)
         return { sessions }
@@ -297,32 +334,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
   },
 
-  getExcludedSkills: (sessionId) => {
-    return get().sessions.find((s) => s.id === sessionId)?.excludedSkills ?? []
-  },
+  getExcludedSkills: () => get().globalExcludedSkills,
 
-  toggleExcludedSkill: (sessionId, name) => {
+  toggleExcludedSkill: (name) => {
     set((state) => {
-      const sessions = state.sessions.map((s) => {
-        if (s.id !== sessionId) return s
-        const list = s.excludedSkills ?? []
-        const excludedSkills = list.includes(name)
-          ? list.filter((item) => item !== name)
-          : [...list, name]
-        return { ...s, excludedSkills }
-      })
+      const list = state.globalExcludedSkills
+      const next = list.includes(name) ? list.filter((item) => item !== name) : [...list, name]
+      saveGlobalExcludedSkills(next)
+      const sessions = syncSessionsExcludedSkills(state.sessions, next)
       saveSessions(sessions)
-      return { sessions }
-    })
-  },
-
-  clearExcludedSkills: (sessionId) => {
-    set((state) => {
-      const sessions = state.sessions.map((s) =>
-        s.id === sessionId ? { ...s, excludedSkills: [] } : s
-      )
-      saveSessions(sessions)
-      return { sessions }
+      return { globalExcludedSkills: next, sessions }
     })
   },
 

@@ -107,13 +107,13 @@ export function NoteComposer({
   }, [])
 
   const tryExitBlockEdit = useCallback(
-    (e?: Pick<KeyboardEvent, 'preventDefault' | 'stopImmediatePropagation'>): boolean => {
+    (e?: Pick<KeyboardEvent, 'preventDefault'> & { stopImmediatePropagation?: () => void }): boolean => {
       const visual = visualRef.current
       if (!visual || inputMode !== 'visual') return false
       if (!exitSlashBlockEdit(visual)) return false
       if (e) {
         e.preventDefault()
-        e.stopImmediatePropagation()
+        e.stopImmediatePropagation?.()
       }
       suppressBlockEditingRef.current = true
       setBlockEditing(false)
