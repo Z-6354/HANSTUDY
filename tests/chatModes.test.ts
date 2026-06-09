@@ -8,8 +8,9 @@ import {
 describe('chatModes rules', () => {
   it('getSystemPromptForMode returns mode-specific prompts', () => {
     expect(getSystemPromptForMode('chat')).toContain('文档阅读助手')
-    expect(getSystemPromptForMode('agent')).toContain('智能体')
+    expect(getSystemPromptForMode('agent')).toContain('阅读智能体')
     expect(getSystemPromptForMode('reading')).toContain('阅读助手')
+    expect(getSystemPromptForMode('reading')).toContain('引用格式')
   })
 
   it('getContextWindowForModel falls back to default', () => {

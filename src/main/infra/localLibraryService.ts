@@ -1,8 +1,7 @@
 import { existsSync, realpathSync } from 'fs'
-import { mkdir } from 'fs/promises'
 import { resolve } from 'path'
 import type { FileEntry } from '../../shared/types'
-import { resolveLocalLibraryRoot } from '../config/appEnvironment'
+import { ensureWorkspaceDir, getKnowledgeLibraryPath } from '../config/workspaceRootService'
 import {
   importFilesToDirectory,
   listDirectory,
@@ -10,15 +9,12 @@ import {
 } from './fileService'
 
 export function getLocalLibraryRoot(): string {
-  return resolveLocalLibraryRoot()
+  return getKnowledgeLibraryPath()
 }
 
 export async function ensureLocalLibraryDir(): Promise<string> {
-  const root = getLocalLibraryRoot()
-  if (!existsSync(root)) {
-    await mkdir(root, { recursive: true })
-  }
-  return root
+  await ensureWorkspaceDir()
+  return getKnowledgeLibraryPath()
 }
 
 export async function listLocalLibraryFiles(): Promise<FileEntry[]> {

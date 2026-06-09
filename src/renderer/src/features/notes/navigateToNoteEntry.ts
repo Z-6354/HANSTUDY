@@ -98,7 +98,6 @@ export async function navigateToChatContextItem(
   }
 
   if (item.kind === 'document' && item.docPath) {
-    useWorkspaceStore.getState().setWorkbenchMode('compose')
     const anchor: DocumentNoteAnchor = item.anchor ?? {
       docPath: item.docPath,
       docType: 'unknown',

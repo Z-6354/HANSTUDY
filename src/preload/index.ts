@@ -102,7 +102,7 @@ const api = {
       ipcRenderer.invoke('fs:getDocumentContext', filePath),
     getAiChatDocumentContext: (
       filePath: string,
-      options?: { monacoLine?: number; scrollRatio?: number }
+      options?: { monacoLine?: number; scrollRatio?: number; pdfPage?: number }
     ): Promise<{
       fileName: string
       content: string
@@ -350,6 +350,10 @@ const api = {
     save: (session: import('../shared/readingProgress').WorkspaceSession): Promise<void> =>
       ipcRenderer.invoke('workspaceSession:save', session)
   },
+  agentPaths: {
+    setLoadedFolder: (folder: string | null): Promise<boolean> =>
+      ipcRenderer.invoke(IPC.agentPaths.setLoadedFolder, folder)
+  },
   skills: {
     list: (): Promise<SkillListItem[]> => ipcRenderer.invoke('skills:list'),
     enable: (name: string): Promise<boolean> => ipcRenderer.invoke('skills:enable', name),
@@ -475,6 +479,16 @@ const api = {
       ipcRenderer.invoke(IPC.mcp.restart, serverId),
     toggle: (serverId: string, enabled: boolean): Promise<McpServerState[]> =>
       ipcRenderer.invoke(IPC.mcp.toggle, serverId, enabled)
+  },
+  logs: {
+    getInfo: (): Promise<import('../shared/appLog').AppLogInfo> =>
+      ipcRenderer.invoke(IPC.logs.getInfo),
+    readAuditRecent: (limit?: number): Promise<import('../shared/auditLog').AuditEntry[]> =>
+      ipcRenderer.invoke(IPC.logs.readAuditRecent, limit ?? 50),
+    readAppLogRecent: (limit?: number): Promise<string[]> =>
+      ipcRenderer.invoke(IPC.logs.readAppLogRecent, limit ?? 30),
+    openDir: (which: 'logs' | 'audit'): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke(IPC.logs.openDir, which)
   }
 }
 

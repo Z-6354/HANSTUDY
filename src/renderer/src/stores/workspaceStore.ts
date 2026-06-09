@@ -54,7 +54,7 @@ function genContextId(): string {
 
 export type DocumentType = 'txt' | 'md' | 'pdf' | 'docx' | 'web' | 'settings' | 'unknown'
 export type SidebarTab = 'explorer' | 'notes' | 'web'
-export type SettingsSection = 'system' | 'skill' | 'mcp'
+export type SettingsSection = 'system' | 'project' | 'skill' | 'mcp' | 'logs'
 
 export type LayoutPanelId = 'sidebar' | 'tabBar' | 'aiPanel' | 'globalSearchBar'
 
@@ -543,12 +543,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   setRootFolder: (path, files) => {
     set({ rootFolder: path, fileTree: files })
-    void window.api.skills.setProjectDir(path)
+    try {
+      void window.api.agentPaths?.setLoadedFolder(path)
+    } catch {
+      // preload 未就绪时忽略，避免阻塞 UI
+    }
   },
 
   clearRootFolder: () => {
     set({ rootFolder: null, fileTree: [] })
-    void window.api.skills.setProjectDir(null)
+    try {
+      void window.api.agentPaths?.setLoadedFolder(null)
+    } catch {
+      // ignore
+    }
   },
 
   addRecentFile: (path) => {

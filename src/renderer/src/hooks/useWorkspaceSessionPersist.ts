@@ -53,11 +53,14 @@ export function useWorkspaceSessionPersist(): void {
       applyLayoutFromSession(session)
 
       if (session.rootFolder) {
-        try {
-          const items = await window.api.fs.listDirectory(session.rootFolder)
-          useWorkspaceStore.getState().setRootFolder(session.rootFolder, items)
-        } catch {
-          // 目录不可用，由 FileExplorer 回退到默认资料库
+        const isLibrary = await window.api.localLibrary.isPath(session.rootFolder)
+        if (isLibrary) {
+          try {
+            const items = await window.api.fs.listDirectory(session.rootFolder)
+            useWorkspaceStore.getState().setRootFolder(session.rootFolder, items)
+          } catch {
+            // 目录不可用，由 FileExplorer 回退到默认知识库
+          }
         }
       }
 

@@ -17,15 +17,16 @@ export function formatSkillIndex(enabled: Skill[]): string {
     )
   }
 
-  let sb = '## 可用 Skills\n\n'
+  let sb = '## 可用 Skills（按需调用 load_skill 加载完整指引）\n\n'
   for (const skill of effective) {
     const desc = truncateByCodepoint(skill.description.trim(), MAX_DESCRIPTION_CODEPOINTS)
     sb += `- **${skill.name}**：${desc}\n`
   }
 
   sb +=
-    '\n当用户任务匹配某个 skill 的场景时，请严格遵循下方「已激活 Skill」中的完整指引；' +
-    '若无已激活 Skill，则根据索引中的描述自行判断是否需要该领域的专门流程。\n'
+    '\n判断准则：当任务描述匹配某个 skill 的触发场景时，调用 load_skill(name) 加载完整指引；' +
+    '已加载的 skill 会在下一轮以 "## 已加载 Skill" 段落出现在上下文中。' +
+    '不要重复加载同一 skill；同一会话内一次足够。\n'
 
   if (sb.length > MAX_INDEX_CHARS) {
     console.warn(`[skills] skill 索引段超过 ${MAX_INDEX_CHARS} 字符，已截断`)
@@ -55,7 +56,7 @@ function truncateByCodepoint(s: string, limit: number): string {
   return chars.slice(0, limit).join('') + '...'
 }
 
-function truncateBytes(s: string, limit: number): string {
+export function truncateSkillBodyBytes(s: string, limit: number): string {
   if (Buffer.byteLength(s, 'utf-8') <= limit) return s
   let result = ''
   for (const ch of s) {
@@ -64,4 +65,8 @@ function truncateBytes(s: string, limit: number): string {
     result = next
   }
   return result + '\n...(skill 正文被截断)\n'
+}
+
+function truncateBytes(s: string, limit: number): string {
+  return truncateSkillBodyBytes(s, limit)
 }

@@ -1,8 +1,10 @@
 import type { LucideIcon } from 'lucide-react'
-import { Plug, Puzzle, Settings } from 'lucide-react'
+import { FolderRoot, Plug, Puzzle, ScrollText, Settings } from 'lucide-react'
 import { Icon } from '../../components/IconButton'
 import { useWorkspaceStore, type SettingsSection } from '../../stores/workspaceStore'
+import { LogsPanel } from './LogsPanel'
 import { McpPanel } from './McpPanel'
+import { ProjectConfigPanel } from './ProjectConfigPanel'
 import { SkillPanel } from './SkillPanel'
 import { SystemConfigPanel } from './SystemConfigPanel'
 
@@ -14,8 +16,10 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { id: 'system', label: '系统配置', icon: Settings },
+  { id: 'project', label: '项目', icon: FolderRoot },
   { id: 'skill', label: 'Skill', icon: Puzzle },
-  { id: 'mcp', label: 'MCP', icon: Plug }
+  { id: 'mcp', label: 'MCP', icon: Plug },
+  { id: 'logs', label: '日志', icon: ScrollText }
 ]
 
 export function SettingsPage(): JSX.Element {
@@ -41,8 +45,10 @@ export function SettingsPage(): JSX.Element {
       </nav>
       <div className="settings-content">
         {settingsSection === 'system' && <SystemConfigPanel />}
+        {settingsSection === 'project' && <ProjectConfigPanel />}
         {settingsSection === 'skill' && <SkillPanel />}
         {settingsSection === 'mcp' && <McpPanel />}
+        {settingsSection === 'logs' && <LogsPanel />}
       </div>
     </div>
   )

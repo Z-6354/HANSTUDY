@@ -1,7 +1,6 @@
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
 import { stat, writeFile } from 'fs/promises'
-import { dirname } from 'path'
 import { IPC } from '../../shared/ipc/channels'
 import type { ChatApiMessage } from '../../shared/chatPayload'
 import type { AppSettings } from '../../shared/appSettings'
@@ -39,7 +38,8 @@ import {
 } from '../infra/notebooksStore'
 import { getFeedbackClientMeta, submitFeedback } from '../feedback/feedbackService'
 import { getAppEnvironmentInfo, isOtherEnvironmentPath } from '../config/appEnvironment'
-import { getAppSettings, saveAppSettings } from '../config/appSettingsService'
+import { getAppSettings, normalizeSettings, saveAppSettings } from '../config/appSettingsService'
+import { applyWorkspaceRootFromSettings, restartWorkspaceMcpServers } from '../config/workspaceRootService'
 import { getBackendStatus } from '../runtime/javaBridge'
 import { buildFullMemorySnapshot } from '../infra/memoryDiagnostics'
 import {
@@ -63,8 +63,7 @@ import {
   getUserSkillsDir,
   installSkill,
   listSkills,
-  reloadSkills,
-  setProjectSkillsDir
+  reloadSkills
 } from '../skill/skillService'
 import {
   collectFilesFromDirectory,
@@ -133,6 +132,7 @@ import {
 } from '../web/webGuestService'
 import type { SaveWebCredentialInput } from '../../shared/webLibrary'
 import { registerHitlIpc } from '../hitl/HitlToolRegistry'
+import { getAppLogInfo, openLogsDirectory, readRecentAppLogLines, readRecentAuditEntries } from '../logging/logService'
 
 export function registerAllHandlers(): void {
   registerScreenshotOverlayHandlers()
@@ -188,7 +188,6 @@ export function registerAllHandlers(): void {
     })
     if (result.canceled || result.filePaths.length === 0) return null
     const filePath = result.filePaths[0]
-    ctx.setWorkspaceRoot(dirname(filePath))
     return { path: filePath, name: getDisplayName(filePath), type: getFileType(filePath) }
   })
 
@@ -201,7 +200,6 @@ export function registerAllHandlers(): void {
     if (isOtherEnvironmentPath(folderPath)) {
       throw new Error('该文件夹属于另一套环境（用户/测试）的资料库，请在本环境使用对应的资料库目录。')
     }
-    ctx.setWorkspaceRoot(folderPath)
     const files = await collectFilesFromDirectory(folderPath)
     return { path: folderPath, files }
   })
@@ -226,17 +224,12 @@ export function registerAllHandlers(): void {
   })
 
   ipcRegistry.register(IPC.localLibrary.list, async () => listLocalLibraryFiles())
-  ipcRegistry.register(IPC.localLibrary.getPath, async () => {
-    const root = await ensureLocalLibraryDir()
-    ctx.setWorkspaceRoot(root)
-    return root
-  })
+  ipcRegistry.register(IPC.localLibrary.getPath, async () => ensureLocalLibraryDir())
   ipcRegistry.register(IPC.localLibrary.isPath, async (targetPath: unknown) =>
     isLocalLibraryPath(String(targetPath ?? ''))
   )
   ipcRegistry.register(IPC.localLibrary.import, async () => {
     const root = await ensureLocalLibraryDir()
-    ctx.setWorkspaceRoot(root)
     const result = await dialog.showOpenDialog(ctx.mainWindow!, {
       title: '上传文件到本地库',
       defaultPath: root,
@@ -447,7 +440,19 @@ export function registerAllHandlers(): void {
 
   ipcRegistry.register(IPC.appSettings.get, async () => getAppSettings())
   ipcRegistry.register(IPC.appSettings.save, async (settings: unknown) => {
-    await saveAppSettings(settings as AppSettings)
+    const prev = await getAppSettings()
+    const next = normalizeSettings(settings as Partial<AppSettings>)
+    await saveAppSettings(next)
+    if (prev.workspaceRoot !== next.workspaceRoot) {
+      await applyWorkspaceRootFromSettings(next)
+      await restartWorkspaceMcpServers()
+    }
+    return true
+  })
+
+  ipcRegistry.register(IPC.agentPaths.setLoadedFolder, async (folder: unknown) => {
+    const path = folder ? String(folder).trim() : null
+    ctx.setLoadedFolder(path)
     return true
   })
 
@@ -504,10 +509,7 @@ export function registerAllHandlers(): void {
   })
   ipcRegistry.register(IPC.skills.setProjectDir, async (rootFolder: unknown) => {
     const root = rootFolder ? String(rootFolder).trim() : null
-    setProjectSkillsDir(root || null)
-    ctx.setWorkspaceRoot(root)
-    await reloadSkills()
-    await ctx.mcpManager.startAll(ctx.toolRegistry)
+    await applyWorkspaceRootFromSettings({ workspaceRoot: root })
     return listSkills()
   })
 
@@ -517,6 +519,19 @@ export function registerAllHandlers(): void {
 
   ipcRegistry.register(IPC.backend.getStatus, async () => getBackendStatus())
   ipcRegistry.register(IPC.app.getEnvironment, async () => getAppEnvironmentInfo())
+
+  ipcRegistry.register(IPC.logs.getInfo, async () => getAppLogInfo())
+  ipcRegistry.register(IPC.logs.readAuditRecent, async (limit: unknown) =>
+    readRecentAuditEntries(typeof limit === 'number' ? limit : 50)
+  )
+  ipcRegistry.register(IPC.logs.readAppLogRecent, async (limit: unknown) =>
+    readRecentAppLogLines(typeof limit === 'number' ? limit : 30)
+  )
+  ipcRegistry.register(IPC.logs.openDir, async (which: unknown) => {
+    const target = which === 'audit' ? 'audit' : 'logs'
+    const ok = await openLogsDirectory(target)
+    return { ok }
+  })
 }
 
 function registerAiHandlers(): void {
@@ -539,7 +554,9 @@ function registerAiHandlers(): void {
 
       const msgList = messages as ChatApiMessage[]
       const mode = (chatMode as import('../../shared/types').ChatMode | undefined) ?? 'chat'
-      const docCtx = documentContext as { fileName: string; content: string } | undefined
+      const docCtx = documentContext as
+        | { fileName: string; content: string; docPath?: string; hint?: string }
+        | undefined
 
       try {
         if (mode === 'agent') {

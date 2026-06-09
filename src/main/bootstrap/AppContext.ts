@@ -13,7 +13,9 @@ export class AppContext {
   readonly mcpManager = new McpServerManager()
   hitlRegistry: HitlToolRegistry | null = null
   agent: Agent | null = null
-  workspaceRoot: string | null = null
+  projectRoot: string | null = null
+  agentReadableRoots: string[] = []
+  loadedFolder: string | null = null
 
   initAgentStack(): void {
     this.hitlRegistry = new HitlToolRegistry(
@@ -23,10 +25,22 @@ export class AppContext {
     this.agent = new Agent(this.llmClient, this.hitlRegistry)
   }
 
-  setWorkspaceRoot(root: string | null): void {
-    this.workspaceRoot = root
-    this.toolRegistry.pathGuard.setWorkspaceRoot(root)
+  /** HanStudy 项目根（MCP 配置解析用）。 */
+  setProjectRoot(root: string | null): void {
+    this.projectRoot = root
     this.mcpManager.setProjectRoot(root)
+  }
+
+  /** Agent 固定可读根目录（workspace/、.hanstudy/）。 */
+  setAgentReadableRoots(roots: string[]): void {
+    this.agentReadableRoots = roots
+    this.toolRegistry.pathGuard.setAgentRoots(roots)
+  }
+
+  /** 资源管理器当前打开的文件夹。 */
+  setLoadedFolder(folder: string | null): void {
+    this.loadedFolder = folder
+    this.toolRegistry.pathGuard.setLoadedFolder(folder)
   }
 }
 

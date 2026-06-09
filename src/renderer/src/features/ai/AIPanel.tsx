@@ -14,6 +14,7 @@ import {
   Trash2,
   X
 } from 'lucide-react'
+import { formatReadingProgressHint } from '@shared/readingAssistant'
 import { estimateTokens, getContextWindowForModel, getSystemPromptForMode } from '@shared/chatModes'
 import { getModelMeta } from '@shared/aiProviders'
 import { AskAIHint } from '../reader/selection/SelectionToolbar'
@@ -41,7 +42,6 @@ import { ChatModeSelector } from './ChatModeSelector'
 import { AISkillMenu } from './AISkillMenu'
 import { ContextUsageRing } from './ContextUsageRing'
 import { HitlApprovalModal } from './HitlApprovalModal'
-import { ToolCallBubble, type ToolStep } from './ToolCallBubble'
 import { IconButton } from '../../components/IconButton'
 import { useChatStore } from '../../stores/chatStore'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
@@ -231,7 +231,7 @@ export function AIPanel(): JSX.Element {
 
   useEffect(() => {
     bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight })
-  }, [messages, activeStream, activeSessionId])
+  }, [messages, activeStream, activeSessionId, activeStream?.toolSteps])
 
   useEffect(() => {
     const offChunk = window.api.ai.onStreamChunk((requestId, chunk) => {
@@ -316,7 +316,7 @@ export function AIPanel(): JSX.Element {
     activeDoc &&
     activeDoc.type !== 'settings' &&
     activeDoc.type !== 'web' &&
-    (activeDoc.type === 'txt' || activeDoc.type === 'md')
+    (activeDoc.type === 'txt' || activeDoc.type === 'md' || activeDoc.type === 'pdf')
       ? activeDoc
       : null
 
@@ -374,9 +374,15 @@ export function AIPanel(): JSX.Element {
       const progress = await window.api.readingProgress.get(attachableDoc.path)
       const ctx = await window.api.fs.getAiChatDocumentContext(attachableDoc.path, {
         monacoLine: progress?.monacoLine,
-        scrollRatio: progress?.scrollRatio
+        scrollRatio: progress?.scrollRatio,
+        pdfPage: progress?.pdfPage
       })
-      const hint = ctx.sectionTitle ? `章节：${ctx.sectionTitle}` : undefined
+      const hint =
+        formatReadingProgressHint({
+          sectionTitle: ctx.sectionTitle,
+          pdfPage: progress?.pdfPage,
+          monacoLine: progress?.monacoLine
+        }) ?? (ctx.sectionTitle ? `章节：${ctx.sectionTitle}` : undefined)
       addChatContextItem({
         kind: 'document',
         label: attachableDoc.name,
@@ -677,9 +683,9 @@ export function AIPanel(): JSX.Element {
               msg.id === activeStream?.assistantId &&
               isSessionStreaming(activeSessionId)
             const toolSteps =
-              streamingThis && activeStream
-                ? (activeStream.toolSteps as ToolStep[])
-                : (msg.toolSteps as ToolStep[] | undefined)
+              streamingThis && activeStream?.toolSteps?.length
+                ? activeStream.toolSteps
+                : msg.toolSteps
             return (
             <AIMessageBubble
               key={msg.id}
@@ -688,6 +694,7 @@ export function AIPanel(): JSX.Element {
               images={msg.role === 'user' ? msg.images : undefined}
               isError={msg.isError}
               isStreaming={streamingThis}
+              toolSteps={toolSteps}
               contextItems={msg.role === 'user' ? msg.contextItems : undefined}
               onContextItemNavigate={
                 msg.role === 'user' ? handleSnapshotNavigate : undefined
@@ -698,9 +705,6 @@ export function AIPanel(): JSX.Element {
                   : undefined
               }
             >
-              {msg.role === 'assistant' &&
-                (toolSteps?.length ?? 0) > 0 &&
-                !msg.isError && <ToolCallBubble steps={toolSteps!} />}
               {streamingThis && !msg.isError && (
                 <IconButton
                   icon={Pause}
@@ -796,7 +800,11 @@ export function AIPanel(): JSX.Element {
                   <IconButton
                     icon={attaching ? Loader2 : Paperclip}
                     label={
-                      attaching ? '读取中...' : `将「${attachableDoc.name}」当前章节加入对话`
+                      attaching
+                        ? '读取中...'
+                        : attachableDoc.type === 'pdf'
+                          ? `将「${attachableDoc.name}」当前页加入对话`
+                          : `将「${attachableDoc.name}」当前章节加入对话`
                     }
                     className={`ai-attach-btn ${attaching ? 'spinning' : ''}`}
                     disabled={attaching}

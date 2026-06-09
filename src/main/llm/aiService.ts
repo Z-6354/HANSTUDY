@@ -9,6 +9,7 @@ import {
   modelSupportsThinking
 } from '../../shared/aiProviders'
 import { getSystemPromptForMode } from '../../shared/chatModes'
+import { formatDocumentContextHeader } from '../../shared/readingAssistant'
 import type { ChatApiMessage } from '../../shared/chatPayload'
 import { extractMessageText } from '../../shared/chatPayload'
 import type { AISettings, ChatMode } from '../../shared/types'
@@ -222,7 +223,7 @@ function buildThinkingBody(
 export interface ChatRequest {
   messages: ChatApiMessage[]
   contextText?: string
-  documentContext?: { fileName: string; content: string }
+  documentContext?: { fileName: string; content: string; docPath?: string; hint?: string }
   chatMode?: ChatMode
   excludedSkills?: string[]
 }
@@ -263,9 +264,14 @@ export async function streamChat(
 
   const contextMessages: Array<{ role: 'user'; content: string }> = []
   if (request.documentContext?.content) {
+    const header = formatDocumentContextHeader(
+      request.documentContext.fileName,
+      request.documentContext.hint,
+      request.documentContext.docPath
+    )
     contextMessages.push({
       role: 'user',
-      content: `以下是我加入对话的参考文档「${request.documentContext.fileName}」：\n\n${request.documentContext.content}`
+      content: `以下是我加入对话的参考文档 ${header}：\n\n${request.documentContext.content}`
     })
   }
   if (request.contextText) {
@@ -338,10 +344,12 @@ export async function streamChat(
             choices?: Array<{ delta?: { content?: string; reasoning_content?: string } }>
           }
           const delta = json.choices?.[0]?.delta
-          const chunk = delta?.content ?? delta?.reasoning_content ?? ''
-          if (chunk) {
-            fullText += chunk
-            onChunk(chunk)
+          if (delta?.reasoning_content) {
+            // 深度思考内容仅落盘日志，不展示给用户
+          }
+          if (delta?.content) {
+            fullText += delta.content
+            onChunk(delta.content)
           }
         } catch {
           // ignore malformed chunks

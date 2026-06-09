@@ -20,7 +20,14 @@ function normalizeBool(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback
 }
 
-function normalizeSettings(stored: Partial<AppSettings>): AppSettings {
+function normalizeWorkspaceRoot(value: unknown): string | null {
+  if (value == null) return null
+  const trimmed = String(value).trim()
+  return trimmed || null
+}
+
+export function normalizeSettings(stored: Partial<AppSettings> & { projectRoot?: unknown }): AppSettings {
+  const legacyRoot = stored.workspaceRoot ?? stored.projectRoot
   return {
     searchEngine: normalizeEngine(stored.searchEngine),
     webBrowseHideSidebar: normalizeBool(
@@ -31,7 +38,8 @@ function normalizeSettings(stored: Partial<AppSettings>): AppSettings {
       stored.webBrowseHideAIPanel,
       DEFAULT_APP_SETTINGS.webBrowseHideAIPanel
     ),
-    hitlAutoApprove: normalizeBool(stored.hitlAutoApprove, DEFAULT_APP_SETTINGS.hitlAutoApprove)
+    hitlAutoApprove: normalizeBool(stored.hitlAutoApprove, DEFAULT_APP_SETTINGS.hitlAutoApprove),
+    workspaceRoot: normalizeWorkspaceRoot(legacyRoot)
   }
 }
 

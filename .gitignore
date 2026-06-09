@@ -3,6 +3,8 @@ out
 release
 dist
 *.log
+logs/
+audit/
 .DS_Store
 Thumbs.db
 docs

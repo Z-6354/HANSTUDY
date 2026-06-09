@@ -2,6 +2,8 @@ import { readFile, copyFile, cp, mkdir, readdir, rename, rm, stat, writeFile } f
 import mammoth from 'mammoth'
 import { basename, extname, join } from 'path'
 import { extractMdSection, extractTxtWindow, MAX_AI_DOC_CONTEXT } from '../../shared/documentContextExtract'
+import { computePdfPageWindow, resolvePdfCenterPage } from '../../shared/pdfContextExtract'
+import { extractPdfPageRange, extractPdfText, getPdfPageCount } from './pdfTextService'
 
 export const SUPPORTED_EXTENSIONS = new Set([
   '.txt',
@@ -211,6 +213,7 @@ export async function importFilesToDirectory(
 export interface DocumentContextOptions {
   monacoLine?: number
   scrollRatio?: number
+  pdfPage?: number
 }
 
 export interface DocumentContext {
@@ -226,22 +229,51 @@ export async function getAiChatDocumentContext(
 ): Promise<DocumentContext> {
   const fileName = basename(filePath)
   const ext = extname(filePath).toLowerCase()
-  if (ext !== '.txt' && ext !== '.md') {
-    throw new Error('暂仅支持 TXT / Markdown 加入 AI 对话')
+
+  if (ext === '.txt' || ext === '.md') {
+    const full = await readTextFile(filePath)
+    const extracted =
+      ext === '.md'
+        ? extractMdSection(full, options.monacoLine)
+        : extractTxtWindow(full, options.monacoLine, options.scrollRatio)
+    return {
+      fileName,
+      content: extracted.content,
+      truncated: extracted.truncated,
+      sectionTitle: extracted.sectionTitle
+    }
   }
 
-  const full = await readTextFile(filePath)
-  const extracted =
-    ext === '.md'
-      ? extractMdSection(full, options.monacoLine)
-      : extractTxtWindow(full, options.monacoLine, options.scrollRatio)
+  if (ext === '.pdf') {
+    const numPages = await getPdfPageCount(filePath)
+    const centerPage = resolvePdfCenterPage({
+      pdfPage: options.pdfPage,
+      scrollRatio: options.scrollRatio,
+      numPages
+    })
+    const { startPage, endPage } = computePdfPageWindow(centerPage, numPages)
+    const parsed = await extractPdfPageRange(filePath, startPage, endPage)
 
-  return {
-    fileName,
-    content: extracted.content,
-    truncated: extracted.truncated,
-    sectionTitle: extracted.sectionTitle
+    if (!parsed.text.trim()) {
+      return {
+        fileName,
+        content:
+          '（未能从 PDF 中提取可读文本，可能是扫描件或图片 PDF。请在阅读区选中文字（若有文本层）或使用便签标注。）',
+        truncated: false,
+        sectionTitle: `第 ${centerPage} 页`
+      }
+    }
+
+    const header = `# ${fileName}（第 ${startPage}-${endPage} 页 / 共 ${numPages} 页）\n\n`
+    return {
+      fileName,
+      content: header + parsed.text,
+      truncated: parsed.truncated,
+      sectionTitle: `第 ${centerPage} 页`
+    }
   }
+
+  throw new Error('暂仅支持 TXT / Markdown / PDF 加入 AI 对话')
 }
 
 export async function getDocumentContext(filePath: string): Promise<DocumentContext> {
@@ -256,7 +288,6 @@ export async function getDocumentContext(filePath: string): Promise<DocumentCont
     const result = await mammoth.extractRawText({ buffer })
     content = result.value
   } else if (ext === '.pdf') {
-    const { extractPdfText } = await import('./pdfTextService')
     content = await extractPdfText(filePath)
     if (!content.trim()) {
       content =

@@ -1,5 +1,6 @@
 /** AI 对话上下文引用（仅展示在对话区，不在文件树出现） */
 import type { DocumentNoteAnchor } from './documentNotes'
+import { formatDocumentContextHeader } from './readingAssistant'
 
 export type ChatContextItemKind = 'document' | 'note'
 
@@ -94,15 +95,21 @@ export function collectSessionContextNotes(
 export function mergeChatContextItems(items: ChatContextItem[]): {
   fileName: string
   content: string
+  docPath?: string
+  hint?: string
 } | undefined {
   if (items.length === 0) return undefined
+  const docItems = items.filter((i) => i.kind === 'document')
+  const primary = docItems[0]
   return {
     fileName: items.map((i) => i.label).join('、'),
     content: items
       .map((i) => {
-        const head = i.hint ? `【${i.label} · ${i.hint}】` : `【${i.label}】`
+        const head = formatDocumentContextHeader(i.label, i.hint, i.docPath)
         return `${head}\n${i.content}`
       })
-      .join('\n\n---\n\n')
+      .join('\n\n---\n\n'),
+    docPath: primary?.docPath,
+    hint: primary?.hint
   }
 }

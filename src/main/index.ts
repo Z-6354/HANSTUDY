@@ -28,7 +28,9 @@ if (gotSingleInstanceLock) {
   let isShuttingDown = false
 
   app.whenReady().then(() => {
-    void startApp()
+    void startApp().catch((err) => {
+      console.error('[bootstrap] startApp failed:', err)
+    })
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createMainWindow()

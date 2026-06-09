@@ -93,6 +93,9 @@ export const IPC = {
   feedback: {
     submit: 'feedback:submit'
   },
+  agentPaths: {
+    setLoadedFolder: 'agentPaths:setLoadedFolder'
+  },
   skills: {
     list: 'skills:list',
     enable: 'skills:enable',
@@ -177,5 +180,11 @@ export const IPC = {
   },
   app: {
     getEnvironment: 'app:getEnvironment'
+  },
+  logs: {
+    getInfo: 'logs:getInfo',
+    readAuditRecent: 'logs:readAuditRecent',
+    readAppLogRecent: 'logs:readAppLogRecent',
+    openDir: 'logs:openDir'
   }
 } as const

@@ -1,5 +1,4 @@
 import { app } from 'electron'
-import { existsSync } from 'fs'
 import { join } from 'path'
 import {
   APP_PROFILE_LABELS,
@@ -8,6 +7,14 @@ import {
   type AppEnvironmentInfo,
   type AppProfile
 } from '../../shared/appEnvironment'
+import { getAppSettings } from './appSettingsService'
+import {
+  getAgentWorkspacePath,
+  getKnowledgeLibraryPath,
+  getWorkspaceRoot,
+  isCustomWorkspaceRoot,
+  resolveDefaultWorkspaceRoot
+} from './workspaceRootService'
 
 const USER_USER_DATA_DIR = 'hanstudy-reader'
 const TEST_USER_DATA_DIR = 'hanstudy-reader-test'
@@ -39,14 +46,9 @@ function userLegacyLibraryRoot(): string {
   return join(app.getPath('appData'), USER_USER_DATA_DIR, 'data', 'local-library')
 }
 
-/** 用户环境保留旧版 AppData 资料库；新装走「文档/寒的学习助手/资料库」。测试环境固定独立目录。 */
+/** @deprecated 使用 getKnowledgeLibraryPath */
 export function resolveLocalLibraryRoot(): string {
-  if (isTestProfile()) {
-    return documentsLibraryRoot(TEST_LIBRARY_SEGMENTS)
-  }
-  const legacy = userLegacyLibraryRoot()
-  if (existsSync(legacy)) return legacy
-  return documentsLibraryRoot(USER_LIBRARY_SEGMENTS)
+  return getKnowledgeLibraryPath()
 }
 
 function resolveOtherLocalLibraryRoots(): string[] {
@@ -92,13 +94,20 @@ export function shouldEnforceSingleInstance(): boolean {
   return !isTestProfile()
 }
 
-export function getAppEnvironmentInfo(): AppEnvironmentInfo {
+export async function getAppEnvironmentInfo(): Promise<AppEnvironmentInfo> {
+  const settings = await getAppSettings()
   const profile = getAppProfile()
+  const workspaceRoot = getWorkspaceRoot()
+  const defaultWorkspaceRoot = resolveDefaultWorkspaceRoot()
   return {
     profile,
     profileLabel: APP_PROFILE_LABELS[profile],
     javaPort: resolveJavaBackendPort(),
     userDataPath: app.getPath('userData'),
-    localLibraryPath: resolveLocalLibraryRoot()
+    workspaceRoot,
+    agentWorkspacePath: getAgentWorkspacePath(),
+    localLibraryPath: getKnowledgeLibraryPath(),
+    defaultWorkspaceRoot,
+    workspaceRootIsCustom: isCustomWorkspaceRoot(settings)
   }
 }

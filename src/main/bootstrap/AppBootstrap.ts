@@ -1,15 +1,20 @@
 import { app, session } from 'electron'
 import { hasJavaBackendJar, startJavaBackend, stopJavaBackend } from '../runtime/javaBridge'
 import { initSkillService } from '../skill/skillService'
-import { registerBuiltinTools } from '../tool/builtins/registerBuiltinTools'
 import { getAppContext } from './AppContext'
 import { createMainWindow } from './createWindow'
 import { registerAllHandlers } from '../ipc/registerAllHandlers'
-import { ensureLocalLibraryDir } from '../infra/localLibraryService'
+import { getAppSettings } from '../config/appSettingsService'
+import { applyWorkspaceRootFromSettings, restartWorkspaceMcpServers } from '../config/workspaceRootService'
 import { destroyWebGuest } from '../web/webGuestService'
+import { appLogger } from '../logging/AppFileLogger'
 
 export async function startApp(): Promise<void> {
   setupWebviewSession()
+  const settings = await getAppSettings()
+  await applyWorkspaceRootFromSettings(settings)
+  appLogger.info('bootstrap', 'HanStudy starting')
+
   const ctx = getAppContext()
 
   if (hasJavaBackendJar()) {
@@ -32,18 +37,15 @@ export async function startApp(): Promise<void> {
     console.error('[bootstrap] Skill service failed:', err)
   }
 
-  registerBuiltinTools(ctx.toolRegistry)
-  const localLibraryRoot = await ensureLocalLibraryDir()
-  ctx.setWorkspaceRoot(localLibraryRoot)
+  ctx.toolRegistry.registerBuiltins()
   ctx.initAgentStack()
-  try {
-    await ctx.mcpManager.startAll(ctx.toolRegistry)
-  } catch (err) {
-    console.error('[bootstrap] MCP servers failed to start:', err)
-  }
 
   registerAllHandlers()
   createMainWindow()
+
+  void restartWorkspaceMcpServers().catch((err) => {
+    console.error('[bootstrap] MCP servers failed to start:', err)
+  })
 }
 
 export async function shutdownApp(): Promise<void> {

@@ -1,8 +1,9 @@
 import { useMemo } from 'react'
 import type { ChatContextSnapshot } from '@shared/aiContext'
-import type { ChatImageAttachment } from '@shared/types'
+import type { ChatImageAttachment, ChatToolStepRecord } from '@shared/types'
 import { renderMarkdownHtml } from '../../utils/markdown'
 import { MessageContextChips } from './MessageContextChips'
+import { ToolCallBubble } from './ToolCallBubble'
 
 interface AIMessageBubbleProps {
   role: 'user' | 'assistant'
@@ -11,6 +12,7 @@ interface AIMessageBubbleProps {
   isStreaming?: boolean
   isError?: boolean
   contextItems?: ChatContextSnapshot[]
+  toolSteps?: ChatToolStepRecord[]
   onContextItemNavigate?: (item: ChatContextSnapshot) => void
   children?: React.ReactNode
   onContextMenu?: (e: React.MouseEvent) => void
@@ -23,6 +25,7 @@ export function AIMessageBubble({
   isStreaming,
   isError,
   contextItems,
+  toolSteps,
   onContextItemNavigate,
   children,
   onContextMenu
@@ -32,9 +35,12 @@ export function AIMessageBubble({
     [role, content, isError]
   )
 
-  const showTyping = role === 'assistant' && isStreaming && !content.trim() && !isError
+  const hasRunningTools = toolSteps?.some((s) => s.status === 'running') ?? false
+  const showTyping =
+    role === 'assistant' && isStreaming && !content.trim() && !isError && !hasRunningTools
   const showStreamCursor =
     role === 'assistant' && isStreaming && content.trim().length > 0 && !isError
+  const showToolSteps = role === 'assistant' && !isError && (toolSteps?.length ?? 0) > 0
 
   return (
     <div className={`ai-bubble-row ai-bubble-row-${role}`} onContextMenu={onContextMenu}>
@@ -58,6 +64,29 @@ export function AIMessageBubble({
           </>
         ) : isError ? (
           <div className="ai-bubble-text ai-bubble-error-text">{content}</div>
+        ) : showToolSteps ? (
+          <>
+            <ToolCallBubble steps={toolSteps!} compact={Boolean(isStreaming)} />
+            {showTyping && (
+              <div className="ai-bubble-typing">
+                <span className="ai-typing-dot" />
+                <span className="ai-typing-dot" />
+                <span className="ai-typing-dot" />
+              </div>
+            )}
+            {!showTyping && showStreamCursor && (
+              <div
+                className="ai-bubble-md markdown-preview is-streaming"
+                dangerouslySetInnerHTML={{ __html: html || '<p></p>' }}
+              />
+            )}
+            {!showTyping && !showStreamCursor && content.trim() && (
+              <div
+                className="ai-bubble-md markdown-preview"
+                dangerouslySetInnerHTML={{ __html: html || '<p></p>' }}
+              />
+            )}
+          </>
         ) : showTyping ? (
           <div className="ai-bubble-typing">
             <span className="ai-typing-dot" />

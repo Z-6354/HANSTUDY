@@ -9,6 +9,7 @@ import { formatLoadedSkillBodies, formatSkillIndex } from './skillIndexFormatter
 import { SkillRegistry } from './skillRegistry'
 import { selectSkillsForChat, shouldIncludeSkillIndex } from './skillSelector'
 import { SkillStateStore } from './skillStateStore'
+import { SkillContextBuffer } from './SkillContextBuffer'
 
 export interface SkillPaths {
   builtinSource: string
@@ -25,6 +26,8 @@ export interface SkillChatResolution {
 let registry: SkillRegistry | null = null
 let paths: SkillPaths | null = null
 let projectSkillsDir: string | null = null
+const skillBuffers = new Map<string, SkillContextBuffer>()
+let activeSkillChatRequestId: string | null = null
 
 function resolveBuiltinSource(): string {
   const packaged = join(process.resourcesPath, 'skills')
@@ -108,10 +111,45 @@ export function getSkillWarnings(): string[] {
   return registry?.getWarnings() ?? []
 }
 
+export function getSkillRegistry(): SkillRegistry | null {
+  return registry
+}
+
+/** 为一次 Agent 对话创建独立 skill 缓冲区（对齐 hancli 每 Agent 实例一个 buffer） */
+export function beginSkillContext(chatRequestId: string): void {
+  activeSkillChatRequestId = chatRequestId
+  skillBuffers.set(chatRequestId, new SkillContextBuffer())
+}
+
+export function endSkillContext(chatRequestId: string): void {
+  skillBuffers.delete(chatRequestId)
+  if (activeSkillChatRequestId === chatRequestId) {
+    activeSkillChatRequestId = null
+  }
+}
+
+export function drainSkillContext(chatRequestId: string): string {
+  const buffer = skillBuffers.get(chatRequestId)
+  if (!buffer || buffer.isEmpty()) return ''
+  return buffer.drain()
+}
+
+export function clearSkillContext(chatRequestId: string): void {
+  skillBuffers.get(chatRequestId)?.clear()
+}
+
 export async function loadSkillBody(name: string): Promise<string | null> {
   if (!registry) return null
   const skill = await registry.findSkill(name)
   return skill?.body ?? null
+}
+
+export async function pushSkillToActiveContext(name: string, body: string): Promise<boolean> {
+  if (!activeSkillChatRequestId) return false
+  const buffer = skillBuffers.get(activeSkillChatRequestId)
+  if (!buffer) return false
+  buffer.push(name, body)
+  return true
 }
 
 export async function resolveSkillsForChat(
@@ -125,7 +163,10 @@ export async function resolveSkillsForChat(
 
   const excluded = new Set(excludedSkillNames)
   const enabled = await registry.enabledSkills()
-  const autoLoaded = selectSkillsForChat(enabled, userMessage, chatMode, excluded)
+  const autoLoaded =
+    chatMode === 'reading'
+      ? selectSkillsForChat(enabled, userMessage, chatMode, excluded)
+      : []
 
   const parts: string[] = []
   if (shouldIncludeSkillIndex(chatMode, enabled.length)) {
@@ -133,6 +174,8 @@ export async function resolveSkillsForChat(
     if (index) parts.push(index)
   }
 
+  // reading 模式：自动注入匹配 skill 正文（产品向，hancli 无此步）
+  // agent 模式：仅索引 + load_skill → SkillContextBuffer → 下一轮注入
   if (autoLoaded.length) {
     parts.push(formatLoadedSkillBodies(autoLoaded))
   }

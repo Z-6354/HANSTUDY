@@ -8,13 +8,16 @@ export interface AppSettings {
   webBrowseHideAIPanel: boolean
   /** 自动批准 MCP 等需 HITL 的工具调用 */
   hitlAutoApprove: boolean
+  /** HanStudy 项目根目录（.hanstudy 配置所在；其下 workspace/ 为 Agent 可读范围）。 */
+  workspaceRoot: string | null
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   searchEngine: 'bing',
   webBrowseHideSidebar: true,
   webBrowseHideAIPanel: true,
-  hitlAutoApprove: false
+  hitlAutoApprove: false,
+  workspaceRoot: null
 }
 
 export const WEB_SEARCH_ENGINE_OPTIONS: { id: WebSearchEngine; label: string }[] = [

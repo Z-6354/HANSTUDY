@@ -1,4 +1,5 @@
 import type { ChatMode } from '../shared/types'
+import { getReadingUnderstandingRules } from './readingAssistant'
 
 export interface ChatModeOption {
   id: ChatMode
@@ -15,7 +16,7 @@ export const CHAT_MODES: ChatModeOption[] = [
   {
     id: 'agent',
     label: '智能体',
-    description: '多步规划与任务分解，适合复杂问题'
+    description: '跨资料库阅读与多步任务，可调用工具'
   },
   {
     id: 'reading',
@@ -28,19 +29,23 @@ export function getSystemPromptForMode(mode: ChatMode): string {
   switch (mode) {
     case 'agent':
       return (
-        '你是智能体助手，具备任务规划与分步执行能力。' +
-        '面对复杂问题时先拆解步骤，再给出清晰、可操作的回答。' +
-        '使用中文，结构分明，必要时使用列表。'
+        '你是阅读智能体，帮助用户理解资料库中的文档并完成跨文件阅读任务。' +
+        '可调用工具列举、搜索、分段读取文档；复杂任务先定位材料再回答。' +
+        '使用中文。\n\n' +
+        getReadingUnderstandingRules({ withTools: true })
       )
     case 'reading':
       return (
-        '你是专业阅读助手，帮助用户理解、摘要和精读文档。' +
-        '回答应紧扣文档内容，区分事实与推断，引用关键句段。' +
-        '使用中文，表达简洁准确。'
+        '你是专业阅读助手，帮助用户理解、摘要和精读当前文档。' +
+        '回答应紧扣用户提供的文档与选区。使用中文。\n\n' +
+        getReadingUnderstandingRules({ withTools: false })
       )
     case 'chat':
     default:
-      return '你是文档阅读助手，帮助用户理解、总结和解释文档内容。回答简洁清晰，使用中文。'
+      return (
+        '你是文档阅读助手，帮助用户理解、总结和解释内容。' +
+        '回答简洁清晰，区分已知事实与推断。使用中文。'
+      )
   }
 }
 

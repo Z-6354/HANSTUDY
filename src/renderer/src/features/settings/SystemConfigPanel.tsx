@@ -337,13 +337,17 @@ export function SystemConfigPanel(): JSX.Element {
 
       <h2 className="settings-section-title settings-section-title-spaced">运行环境</h2>
       <p className="settings-section-desc">
-        用户环境与测试环境数据、资料库、Java 端口完全隔离，可并行运行。
+        用户环境与测试环境数据、工作区、Java 端口完全隔离，可并行运行。
       </p>
       <div className="settings-form backend-status-panel">
         <div className="backend-status-grid">
           <span>当前环境</span>
           <code>{appEnv?.profileLabel ?? '…'}</code>
-          <span>资料库目录</span>
+          <span>项目根目录</span>
+          <code className="backend-status-path">{appEnv?.workspaceRoot ?? '…'}</code>
+          <span>Agent 工作区</span>
+          <code className="backend-status-path">{appEnv?.agentWorkspacePath ?? '…'}</code>
+          <span>知识库</span>
           <code className="backend-status-path">{appEnv?.localLibraryPath ?? '…'}</code>
           <span>配置目录</span>
           <code className="backend-status-path">{appEnv?.userDataPath ?? '…'}</code>

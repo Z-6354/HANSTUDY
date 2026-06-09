@@ -272,11 +272,15 @@ export function FileExplorer(): JSX.Element {
     if (libraryInitRef.current) return
     libraryInitRef.current = true
     void (async () => {
-      const path = await window.api.localLibrary.getPath()
-      setLocalLibraryPath(path)
-      if (!useWorkspaceStore.getState().rootFolder) {
-        const items = await window.api.fs.listDirectory(path)
-        setRootFolder(path, items)
+      const libraryPath = await window.api.localLibrary.getPath()
+      setLocalLibraryPath(libraryPath)
+      const current = useWorkspaceStore.getState().rootFolder
+      const isCurrentLibrary = current
+        ? await window.api.localLibrary.isPath(current)
+        : false
+      if (!isCurrentLibrary) {
+        const items = await window.api.fs.listDirectory(libraryPath)
+        setRootFolder(libraryPath, items)
       }
       setLibraryReady(true)
     })()
@@ -535,18 +539,16 @@ export function FileExplorer(): JSX.Element {
 
       <div className="file-tree" onContextMenu={handleRootContextMenu}>
         {!rootFolder && !libraryReady && (
-          <div className="explorer-hint">正在加载资料库…</div>
+          <div className="explorer-hint">正在加载知识库…</div>
         )}
         {!rootFolder && libraryReady && (
-          <div className="explorer-hint">
-            未打开文件夹。可点击上方「我的资料库」或「打开文件夹」。
-          </div>
+          <div className="explorer-hint">知识库为空，可上传或新建文档。</div>
         )}
         {rootFolder && (
           <div className="explorer-hint">
             {isLocalLibrary
-              ? '我的资料库 · 可新建、上传、删除；点击「退出资料库」返回之前的文件夹或空白状态'
-              : '外部文件夹 · 右键可导入、新建、删除；点击「我的资料库」切换至默认库'}
+              ? '知识库 · 可新建、上传、删除；「打开文件夹」可浏览其他目录（Agent 可读）'
+              : '外部文件夹 · 右键可导入、新建、删除；点击「我的资料库」返回知识库'}
           </div>
         )}
 
