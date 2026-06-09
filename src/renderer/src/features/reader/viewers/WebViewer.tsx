@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowLeft, ArrowRight, ExternalLink, Globe, Loader2, Lock, RefreshCw, Star } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ExternalLink, Globe, Loader2, Lock, RefreshCw, Star, ZoomIn, ZoomOut } from 'lucide-react'
 import { pushDebugEvent } from '@shared/webDiagnostics'
 import type { WebGuestBounds, WebGuestEvent } from '@shared/webGuest'
 import { isRecordableWebUrl } from '@shared/webLibrary'
@@ -11,6 +11,7 @@ import { useWebLibraryStore } from '../../../stores/webLibraryStore'
 import { useViewerCommand } from '../../../features/reader/find/useViewerCommand'
 import { useWorkspaceStore } from '../../../stores/workspaceStore'
 import { WebViewerDiagnostics } from './WebViewerDiagnostics'
+import { useWebZoom } from './useWebZoom'
 import {
   guestUrlsEquivalent,
   isBlankGuestUrl,
@@ -67,6 +68,8 @@ export function WebViewer({ url, docId, isActive }: WebViewerProps): JSX.Element
   const focusMode = useWorkspaceStore((s) => s.focusMode)
   const searchEngine = useAppSettingsStore((s) => s.searchEngine)
   const { addHistory, addBookmark, removeBookmark, bookmarks, isBookmarked } = useWebLibraryStore()
+
+  const { zoom, zoomIn, zoomOut, resetZoom } = useWebZoom(docId, currentUrl, isActive, guestReady)
 
   const railGutter = {
     left: !showSidebar && !focusMode,
@@ -501,6 +504,19 @@ export function WebViewer({ url, docId, isActive }: WebViewerProps): JSX.Element
               void window.api.webGuest.reload()
             }}
           />
+        </div>
+
+        <div className="web-tab-chrome-zoom">
+          <IconButton icon={ZoomOut} label="缩小网页" size={14} onClick={zoomOut} />
+          <button
+            type="button"
+            className="web-tab-chrome-zoom-label"
+            title="重置为 100%"
+            onClick={resetZoom}
+          >
+            {Math.round(zoom * 100)}%
+          </button>
+          <IconButton icon={ZoomIn} label="放大网页" size={14} onClick={zoomIn} />
         </div>
 
         <form

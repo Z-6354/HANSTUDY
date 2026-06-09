@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Check, ChevronRight, Minus, Settings, Sparkles, Square, X } from 'lucide-react'
+import { APP_NAME } from '@shared/appMeta'
+import type { AppEnvironmentInfo } from '@shared/appEnvironment'
 import { IconButton } from '../../components/IconButton'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
 import { isTextEditingTarget } from '../../utils/keyboardTarget'
@@ -23,6 +25,7 @@ interface MenuGroup {
 
 const LAYOUT_PANELS: { id: LayoutPanelId; label: string; shortcut?: string }[] = [
   { id: 'sidebar', label: '资源管理器', shortcut: 'Ctrl+B' },
+  { id: 'globalSearchBar', label: '搜索 / 模式栏' },
   { id: 'tabBar', label: '标签栏' },
   { id: 'aiPanel', label: 'AI 助手', shortcut: 'Ctrl+Shift+A' }
 ]
@@ -34,6 +37,7 @@ export function TitleBar(): JSX.Element {
   const [webPromptOpen, setWebPromptOpen] = useState(false)
   const [webPromptError, setWebPromptError] = useState('')
   const [aboutOpen, setAboutOpen] = useState(false)
+  const [appEnv, setAppEnv] = useState<AppEnvironmentInfo | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const chordListenerRef = useRef<((ev: KeyboardEvent) => void) | null>(null)
   const {
@@ -42,6 +46,7 @@ export function TitleBar(): JSX.Element {
     openSettings,
     showSidebar,
     showTabBar,
+    showGlobalSearchBar,
     toggleLayoutPanel,
     setSidebarTab,
     dispatchViewerCommand
@@ -85,6 +90,8 @@ export function TitleBar(): JSX.Element {
         return showSidebar
       case 'tabBar':
         return showTabBar
+      case 'globalSearchBar':
+        return showGlobalSearchBar
       case 'aiPanel':
         return showAIPanel
       default:
@@ -122,12 +129,16 @@ export function TitleBar(): JSX.Element {
     },
     {
       label: '帮助',
-      items: [{ label: '关于 HAN Study Reader', action: () => setAboutOpen(true) }]
+      items: [{ label: `关于 ${APP_NAME}`, action: () => setAboutOpen(true) }]
     }
   ]
 
   useEffect(() => {
     window.api.window.isMaximized().then(setIsMaximized)
+  }, [])
+
+  useEffect(() => {
+    void window.api.app.getEnvironment().then(setAppEnv)
   }, [])
 
   useEffect(() => {
@@ -252,7 +263,7 @@ export function TitleBar(): JSX.Element {
   return (
     <div className="titlebar">
       <div className="titlebar-left">
-        <div className="titlebar-app-icon" title="HAN Study Reader">
+        <div className="titlebar-app-icon" title={APP_NAME}>
           <AppIcon />
         </div>
         <div className="titlebar-menu" ref={menuRef}>
@@ -278,7 +289,12 @@ export function TitleBar(): JSX.Element {
         </div>
       </div>
 
-      <div className="titlebar-drag">HAN Study Reader</div>
+      <div className="titlebar-drag">
+        {APP_NAME}
+        {appEnv?.profile === 'test' && (
+          <span className="titlebar-env-badge">{appEnv.profileLabel}</span>
+        )}
+      </div>
 
       <div className="titlebar-right">
         <IconButton

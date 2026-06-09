@@ -99,19 +99,19 @@ export function SkillPanel(): JSX.Element {
         <IconButton
           icon={FolderPlus}
           label="导入 Skill"
-          className="secondary-btn"
+          className="secondary-btn icon-action-btn"
           onClick={() => void handleInstall()}
         />
         <IconButton
           icon={FolderOpen}
           label="打开 Skill 目录"
-          className="secondary-btn"
+          className="secondary-btn icon-action-btn"
           onClick={() => void handleOpenDir()}
         />
         <IconButton
           icon={RefreshCw}
           label="刷新列表"
-          className="secondary-btn"
+          className="secondary-btn icon-action-btn"
           onClick={() => void refresh()}
         />
       </div>
@@ -163,7 +163,7 @@ export function SkillPanel(): JSX.Element {
                   <IconButton
                     icon={Trash2}
                     label="删除 Skill"
-                    className="secondary-btn skill-delete-btn"
+                    className="secondary-btn icon-action-btn skill-delete-btn"
                     disabled={busyName === skill.name}
                     onClick={() => void handleDelete(skill)}
                   />

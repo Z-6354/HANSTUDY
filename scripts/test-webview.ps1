@@ -2,7 +2,11 @@
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot\ensure-utf8.ps1"
 
-$root = Split-Path $PSScriptRoot -Parent
+if ($env:HANSTUDY_BUILD_ROOT) {
+  $root = $env:HANSTUDY_BUILD_ROOT
+} else {
+  $root = Split-Path $PSScriptRoot -Parent
+}
 Set-Location $root
 
 Write-Host "== 1/4 TypeScript ==" -ForegroundColor Cyan

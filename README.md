@@ -1,4 +1,4 @@
-# HAN Study Reader
+# 寒的学习助手
 
 **AI 对话 + 笔记本** 学习桌面应用，VS Code / Cursor 风格布局。  
 当前版本：**0.1.0**（预览版）
@@ -29,6 +29,11 @@
 - 回复或历史 **加入笔记**（自动包含提问与引用）
 - AI 笔记可 **跳回对应对话**
 
+### 工作区模式
+
+- **浏览 / 笔记 / 生成 / 反馈** 四种模式（生成模式：全屏 Markdown 草稿，实时渲染）
+- 浏览模式下 AI「加入笔记」不强制切换笔记模式
+
 ### 快捷键
 
 | 快捷键 | 功能 |
@@ -49,20 +54,19 @@ npm run typecheck
 npm run test
 ```
 
-Electron 下载失败时可设镜像：
-
-```powershell
-$env:ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
-npm install
-```
-
 ## 打包（Windows）
+
+在项目目录执行：
 
 ```bash
 npm run dist:win
 ```
 
-产物：`release/HAN Study Reader-Setup-0.1.0.exe`
+或双击 **`打包.bat`**（控制台输出，完成后按任意键关闭）。
+
+产物：`release/寒的学习助手-Setup-0.1.0.exe`（程序本体为 `HanStudyAssistant.exe`）
+
+首次打包会下载 JRE、Electron 等依赖，耗时较长；之后再次打包会快很多。
 
 ## 技术栈
 

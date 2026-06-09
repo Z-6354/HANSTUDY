@@ -1,4 +1,5 @@
 import { BrowserWindow, app, shell } from 'electron'
+import { existsSync } from 'fs'
 import { join } from 'path'
 import { IPC } from '../../shared/ipc/channels'
 import { initWebGuestService } from '../web/webGuestService'
@@ -7,6 +8,18 @@ import { lockPageZoomForWindow } from './pageZoomLock'
 
 const isDev = !app.isPackaged
 
+function resolveWindowIcon(): string | undefined {
+  const devIcon = join(app.getAppPath(), 'build', 'icon.ico')
+  if (existsSync(devIcon)) return devIcon
+  const devPng = join(app.getAppPath(), 'build', 'icon.png')
+  if (existsSync(devPng)) return devPng
+  const packagedIcon = join(process.resourcesPath, 'icon.ico')
+  if (existsSync(packagedIcon)) return packagedIcon
+  const packagedPng = join(process.resourcesPath, 'icon.png')
+  if (existsSync(packagedPng)) return packagedPng
+  return undefined
+}
+
 export function createMainWindow(): BrowserWindow {
   const context = getAppContext()
   const win = new BrowserWindow({
@@ -14,6 +27,7 @@ export function createMainWindow(): BrowserWindow {
     height: 900,
     minWidth: 900,
     minHeight: 600,
+    icon: resolveWindowIcon(),
     show: false,
     frame: false,
     titleBarStyle: 'hidden',

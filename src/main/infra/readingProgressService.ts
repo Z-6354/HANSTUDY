@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { mkdir, readFile, writeFile } from 'fs/promises'
 import { join } from 'path'
+import type { ReadingProgressIndexEntry } from '../../shared/fileFavorites'
 import type { ReadingProgress, WorkspaceSession } from '../../shared/readingProgress'
 
 const PROGRESS_FILE = 'reading-progress.json'
@@ -25,6 +26,17 @@ async function writeJson(fileName: string, data: unknown): Promise<void> {
   await writeFile(join(await dataDir(), fileName), JSON.stringify(data, null, 2), 'utf-8')
 }
 
+export async function listReadingProgressIndex(): Promise<Record<string, ReadingProgressIndexEntry>> {
+  const map = await readJson<Record<string, ReadingProgress>>(PROGRESS_FILE, {})
+  const index: Record<string, ReadingProgressIndexEntry> = {}
+  for (const [path, progress] of Object.entries(map)) {
+    if (progress.updatedAt) {
+      index[path] = { updatedAt: progress.updatedAt }
+    }
+  }
+  return index
+}
+
 export async function getReadingProgress(docPath: string): Promise<ReadingProgress | null> {
   const map = await readJson<Record<string, ReadingProgress>>(PROGRESS_FILE, {})
   return map[docPath] ?? null
@@ -32,11 +44,16 @@ export async function getReadingProgress(docPath: string): Promise<ReadingProgre
 
 export async function saveReadingProgress(progress: ReadingProgress): Promise<ReadingProgress> {
   const map = await readJson<Record<string, ReadingProgress>>(PROGRESS_FILE, {})
+  const prev = map[progress.docPath]
   const next: ReadingProgress = {
-    ...map[progress.docPath],
+    ...prev,
     ...progress,
     docPath: progress.docPath,
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
+    pdfScaleByLayout: {
+      ...prev?.pdfScaleByLayout,
+      ...progress.pdfScaleByLayout
+    }
   }
   map[progress.docPath] = next
   await writeJson(PROGRESS_FILE, map)

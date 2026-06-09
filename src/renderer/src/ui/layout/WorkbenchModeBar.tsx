@@ -1,12 +1,13 @@
-import { BookOpen, PenLine } from 'lucide-react'
+import { BookOpen, MessageSquarePlus, PenLine, Sparkles } from 'lucide-react'
 import type { WorkbenchMode } from '../../types/global.d'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
 
 const MODES: { id: WorkbenchMode; label: string; icon: typeof BookOpen }[] = [
   { id: 'browse', label: '浏览模式', icon: BookOpen },
-  { id: 'compose', label: '笔记模式', icon: PenLine }
+  { id: 'compose', label: '笔记模式', icon: PenLine },
+  { id: 'generate', label: '生成模式', icon: Sparkles },
+  { id: 'feedback', label: '提交反馈', icon: MessageSquarePlus }
 ]
-
 export function WorkbenchModeBar(): JSX.Element {
   const { workbenchMode, setWorkbenchMode } = useWorkspaceStore()
 

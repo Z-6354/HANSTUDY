@@ -1,8 +1,8 @@
-import { app } from 'electron'
-import { existsSync } from 'fs'
+import { existsSync, realpathSync } from 'fs'
 import { mkdir } from 'fs/promises'
-import { join } from 'path'
+import { resolve } from 'path'
 import type { FileEntry } from '../../shared/types'
+import { resolveLocalLibraryRoot } from '../config/appEnvironment'
 import {
   importFilesToDirectory,
   listDirectory,
@@ -10,7 +10,7 @@ import {
 } from './fileService'
 
 export function getLocalLibraryRoot(): string {
-  return join(app.getPath('userData'), 'data', 'local-library')
+  return resolveLocalLibraryRoot()
 }
 
 export async function ensureLocalLibraryDir(): Promise<string> {
@@ -31,9 +31,20 @@ export async function importFilesToLocalLibrary(sourcePaths: string[]): Promise<
   return importFilesToDirectory(root, sourcePaths)
 }
 
+function resolvePathForCompare(filePath: string): string {
+  const absolute = resolve(filePath)
+  try {
+    if (existsSync(absolute)) return realpathSync.native(absolute)
+  } catch {
+    // ignore
+  }
+  return absolute
+}
+
 export function isLocalLibraryPath(filePath: string): boolean {
-  const root = getLocalLibraryRoot()
-  const normalized = filePath.replace(/\\/g, '/')
-  const normalizedRoot = root.replace(/\\/g, '/')
+  const root = resolvePathForCompare(getLocalLibraryRoot())
+  const target = resolvePathForCompare(filePath)
+  const normalizedRoot = root.replace(/\\/g, '/').toLowerCase()
+  const normalized = target.replace(/\\/g, '/').toLowerCase()
   return normalized === normalizedRoot || normalized.startsWith(`${normalizedRoot}/`)
 }

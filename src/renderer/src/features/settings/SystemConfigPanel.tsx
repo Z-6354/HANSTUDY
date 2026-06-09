@@ -7,6 +7,7 @@ import {
   getProviderById,
   inferProviderId
 } from '@shared/aiProviders'
+import type { AppEnvironmentInfo } from '@shared/appEnvironment'
 import { WEB_SEARCH_ENGINE_OPTIONS } from '@shared/appSettings'
 import type { WebSearchEngine } from '@shared/webCrop'
 import { IconButton } from '../../components/IconButton'
@@ -40,9 +41,11 @@ export function SystemConfigPanel(): JSX.Element {
     jarAvailable: boolean
     javaRunning: boolean
     storageMode: 'java' | 'node'
+    javaPort: number
     fallbackReason?: string
   } | null>(null)
   const [backendLoading, setBackendLoading] = useState(false)
+  const [appEnv, setAppEnv] = useState<AppEnvironmentInfo | null>(null)
 
   const provider = getProviderById(settings.provider)
   const isCustom = settings.provider === 'custom'
@@ -78,6 +81,10 @@ export function SystemConfigPanel(): JSX.Element {
       setBackendLoading(false)
     }
   }
+
+  useEffect(() => {
+    void window.api.app.getEnvironment().then(setAppEnv)
+  }, [])
 
   useEffect(() => {
     void refreshBackendStatus()
@@ -328,14 +335,33 @@ export function SystemConfigPanel(): JSX.Element {
         </label>
       </div>
 
+      <h2 className="settings-section-title settings-section-title-spaced">运行环境</h2>
+      <p className="settings-section-desc">
+        用户环境与测试环境数据、资料库、Java 端口完全隔离，可并行运行。
+      </p>
+      <div className="settings-form backend-status-panel">
+        <div className="backend-status-grid">
+          <span>当前环境</span>
+          <code>{appEnv?.profileLabel ?? '…'}</code>
+          <span>资料库目录</span>
+          <code className="backend-status-path">{appEnv?.localLibraryPath ?? '…'}</code>
+          <span>配置目录</span>
+          <code className="backend-status-path">{appEnv?.userDataPath ?? '…'}</code>
+        </div>
+      </div>
+
       <h2 className="settings-section-title settings-section-title-spaced">Java 后端</h2>
-      <p className="settings-section-desc">可选 Java 后端（:17890），后续可扩展 AI / 索引等服务。</p>
+      <p className="settings-section-desc">
+        可选 Java 后端（:{backendStatus?.javaPort ?? '…'}），后续可扩展 AI / 索引等服务。
+      </p>
       <div className="settings-form backend-status-panel">
         <div className="backend-status-grid">
           <span>JAR 包</span>
           <code>{backendStatus == null ? '…' : backendStatus.jarAvailable ? '已找到' : '未找到'}</code>
           <span>Java 进程</span>
           <code>{backendStatus == null ? '…' : backendStatus.javaRunning ? '运行中' : '未运行'}</code>
+          <span>监听端口</span>
+          <code>{backendStatus == null ? '…' : backendStatus.javaPort}</code>
           <span>存储模式</span>
           <code>{backendStatus == null ? '…' : backendStatus.storageMode === 'java' ? 'Java 后端' : 'Node 回退'}</code>
         </div>

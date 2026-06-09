@@ -56,7 +56,7 @@ export type DocumentType = 'txt' | 'md' | 'pdf' | 'docx' | 'web' | 'settings' | 
 export type SidebarTab = 'explorer' | 'notes' | 'web'
 export type SettingsSection = 'system' | 'skill' | 'mcp'
 
-export type LayoutPanelId = 'sidebar' | 'tabBar' | 'aiPanel'
+export type LayoutPanelId = 'sidebar' | 'tabBar' | 'aiPanel' | 'globalSearchBar'
 
 export type ViewerCommandKind = 'find' | 'selectAll'
 
@@ -122,6 +122,7 @@ interface WorkspaceState {
   showAIPanel: boolean
   showSidebar: boolean
   showTabBar: boolean
+  showGlobalSearchBar: boolean
   workbenchMode: WorkbenchMode
   activeNotePath: string | null
   settingsSection: SettingsSection
@@ -160,6 +161,7 @@ interface WorkspaceState {
   setActiveDocument: (id: string) => void
   renameDocument: (id: string, name: string) => void
   setRootFolder: (path: string, files: FileTreeEntry[]) => void
+  clearRootFolder: () => void
   addRecentFile: (path: string) => void
   toggleAIPanel: () => void
   openAIPanel: () => void
@@ -207,6 +209,7 @@ const RECENT_KEY = 'hanstudy-recent-files'
 const WORKBENCH_MODE_KEY = 'hanstudy-workbench-mode'
 const SHOW_SIDEBAR_KEY = 'hanstudy-show-sidebar'
 const SHOW_AI_PANEL_KEY = 'hanstudy-show-ai-panel'
+const SHOW_GLOBAL_SEARCH_KEY = 'hanstudy-show-global-search'
 const SIDEBAR_TAB_KEY = 'hanstudy-sidebar-tab'
 
 function loadShowSidebar(): boolean {
@@ -229,6 +232,25 @@ function loadShowAIPanel(): boolean {
     // ignore
   }
   return true
+}
+
+function loadShowGlobalSearchBar(): boolean {
+  try {
+    const raw = localStorage.getItem(SHOW_GLOBAL_SEARCH_KEY)
+    if (raw === 'false') return false
+    if (raw === 'true') return true
+  } catch {
+    // ignore
+  }
+  return true
+}
+
+function saveShowGlobalSearchBar(show: boolean): void {
+  try {
+    localStorage.setItem(SHOW_GLOBAL_SEARCH_KEY, String(show))
+  } catch {
+    // ignore
+  }
 }
 
 function loadSidebarTab(): SidebarTab {
@@ -258,7 +280,8 @@ export function saveLayoutPanelPrefs(
 function loadWorkbenchMode(): WorkbenchMode {
   try {
     const raw = localStorage.getItem(WORKBENCH_MODE_KEY)
-    return raw === 'compose' ? 'compose' : 'browse'
+    if (raw === 'compose' || raw === 'feedback' || raw === 'generate') return raw
+    return 'browse'
   } catch {
     return 'browse'
   }
@@ -290,6 +313,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   showAIPanel: loadShowAIPanel(),
   showSidebar: loadShowSidebar(),
   showTabBar: true,
+  showGlobalSearchBar: loadShowGlobalSearchBar(),
   workbenchMode: loadWorkbenchMode(),
   activeNotePath: null,
   settingsSection: 'system' as SettingsSection,
@@ -522,6 +546,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     void window.api.skills.setProjectDir(path)
   },
 
+  clearRootFolder: () => {
+    set({ rootFolder: null, fileTree: [] })
+    void window.api.skills.setProjectDir(null)
+  },
+
   addRecentFile: (path) => {
     set((state) => {
       const recentFiles = [path, ...state.recentFiles.filter((f) => f !== path)].slice(0, 20)
@@ -559,6 +588,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         }
         case 'tabBar':
           return { showTabBar: !state.showTabBar }
+        case 'globalSearchBar': {
+          const showGlobalSearchBar = !state.showGlobalSearchBar
+          saveShowGlobalSearchBar(showGlobalSearchBar)
+          return { showGlobalSearchBar }
+        }
         case 'aiPanel': {
           const showAIPanel = !state.showAIPanel
           saveLayoutPanelPrefs(state.showSidebar, showAIPanel, state.sidebarTab)
@@ -585,9 +619,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }),
 
   openSettings: (section = 'system') => {
+    saveWorkbenchMode('browse')
     const existing = get().documents.find((d) => d.path === SETTINGS_DOC_PATH)
     if (existing) {
-      set({ activeDocumentId: existing.id, settingsSection: section, selection: null })
+      set({
+        workbenchMode: 'browse',
+        activeDocumentId: existing.id,
+        settingsSection: section,
+        selection: null
+      })
       return
     }
     get().openDocument({
@@ -595,7 +635,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       name: '软件设置',
       type: 'settings'
     })
-    set({ settingsSection: section })
+    set({ workbenchMode: 'browse', settingsSection: section })
   },
 
   setSettingsSection: (section) => set({ settingsSection: section }),
@@ -648,15 +688,22 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   requestNoteInsert: (markdown, source, aiSessionId) =>
     set((state) => {
+      const request = {
+        seq: state.noteInsertSeq + 1,
+        markdown,
+        source,
+        aiSessionId
+      }
+      if (state.workbenchMode === 'browse' || state.workbenchMode === 'generate') {
+        return {
+          noteInsertSeq: request.seq,
+          noteInsertRequest: request
+        }
+      }
       saveLayoutPanelPrefs(true, state.showAIPanel, 'notes')
       return {
-        noteInsertSeq: state.noteInsertSeq + 1,
-        noteInsertRequest: {
-          seq: state.noteInsertSeq + 1,
-          markdown,
-          source,
-          aiSessionId
-        },
+        noteInsertSeq: request.seq,
+        noteInsertRequest: request,
         workbenchMode: 'compose',
         sidebarTab: 'notes',
         showSidebar: true

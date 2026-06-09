@@ -33,8 +33,10 @@ import {
   formatAiSessionNoteMarkdown
 } from '@shared/aiNoteMarkdown'
 import type { SavedDocumentType } from '@shared/readingProgress'
-import type { AISettings, ChatMessage } from '../../types/global.d'
+import type { AISettings, ChatMessage, ChatImageAttachment, FileEntry, TextSelectionContext, WorkbenchMode } from '@shared/types'
+import { buildChatApiMessage, MAX_CHAT_IMAGES } from '@shared/chatPayload'
 import { AIMessageBubble } from './AIMessageBubble'
+import { AIImageInputBar } from './AIImageInputBar'
 import { ChatModeSelector } from './ChatModeSelector'
 import { AISkillMenu } from './AISkillMenu'
 import { ContextUsageRing } from './ContextUsageRing'
@@ -122,6 +124,8 @@ export function AIPanel(): JSX.Element {
   const isStreamingActiveSession = isSessionStreaming(activeSessionId)
 
   const [input, setInput] = useState('')
+  const [pendingImages, setPendingImages] = useState<ChatImageAttachment[]>([])
+  const [imageBusy, setImageBusy] = useState(false)
   const [attachError, setAttachError] = useState<string | null>(null)
   const [attaching, setAttaching] = useState(false)
   const [aiSettings, setAiSettings] = useState<AISettings | null>(null)
@@ -316,6 +320,52 @@ export function AIPanel(): JSX.Element {
       ? activeDoc
       : null
 
+  const addPendingImage = (dataUrl: string, name?: string): void => {
+    setAttachError(null)
+    setPendingImages((prev) => {
+      if (prev.length >= MAX_CHAT_IMAGES) {
+        setAttachError(`最多同时发送 ${MAX_CHAT_IMAGES} 张图片`)
+        return prev
+      }
+      return [
+        ...prev,
+        {
+          id: genId(),
+          dataUrl,
+          name
+        }
+      ]
+    })
+  }
+
+  const handleUploadImage = async (): Promise<void> => {
+    if (imageBusy || isStreamingActiveSession) return
+    setImageBusy(true)
+    setAttachError(null)
+    try {
+      const picked = await window.api.dialog.openImage()
+      if (picked) addPendingImage(picked.dataUrl, picked.name)
+    } catch (err) {
+      setAttachError(err instanceof Error ? err.message : '无法读取图片')
+    } finally {
+      setImageBusy(false)
+    }
+  }
+
+  const handleStartScreenshot = async (): Promise<void> => {
+    if (imageBusy || isStreamingActiveSession) return
+    setImageBusy(true)
+    setAttachError(null)
+    try {
+      const result = await window.api.screenshot.pickRegion()
+      if (result) addPendingImage(result.dataUrl, '截图.png')
+    } catch (err) {
+      setAttachError(err instanceof Error ? err.message : '截图失败')
+    } finally {
+      setImageBusy(false)
+    }
+  }
+
   const handleAttachActiveDoc = async (): Promise<void> => {
     if (!attachableDoc || attaching) return
     setAttaching(true)
@@ -407,7 +457,8 @@ export function AIPanel(): JSX.Element {
 
   const handleSend = async (): Promise<void> => {
     const text = input.trim()
-    if (!text || isStreamingActiveSession) return
+    const hasImages = pendingImages.length > 0
+    if ((!text && !hasImages) || isStreamingActiveSession) return
 
     setAttachError(null)
     abortedRequestsRef.current.delete('')
@@ -419,17 +470,20 @@ export function AIPanel(): JSX.Element {
     const sentContextItems = chatContextItems
     const contextSnapshot = snapshotChatContextItems(sentContextItems)
     const documentContext = mergeChatContextItems(sentContextItems)
+    const sentImages = pendingImages
 
     const userMsg = {
       id: genId(),
       role: 'user' as const,
-      content: text,
+      content: text || (hasImages ? '请看我发送的图片。' : ''),
       createdAt: new Date().toISOString(),
       contextText: selectionText,
-      contextItems: contextSnapshot.length > 0 ? contextSnapshot : undefined
+      contextItems: contextSnapshot.length > 0 ? contextSnapshot : undefined,
+      images: sentImages.length > 0 ? sentImages : undefined
     }
     addMessage(sessionId, userMsg)
     setInput('')
+    setPendingImages([])
     if (sentContextItems.length > 0) clearChatContextItems()
 
     const assistantId = genId()
@@ -440,7 +494,7 @@ export function AIPanel(): JSX.Element {
       createdAt: new Date().toISOString()
     })
 
-    const history = [...messages, userMsg].map((m) => ({ role: m.role, content: m.content }))
+    const history = [...messages, userMsg].map((m) => buildChatApiMessage(m))
     const requestId = genId()
     startStream(sessionId, requestId, assistantId)
 
@@ -631,6 +685,7 @@ export function AIPanel(): JSX.Element {
               key={msg.id}
               role={msg.role === 'user' ? 'user' : 'assistant'}
               content={msg.content}
+              images={msg.role === 'user' ? msg.images : undefined}
               isError={msg.isError}
               isStreaming={streamingThis}
               contextItems={msg.role === 'user' ? msg.contextItems : undefined}
@@ -769,6 +824,14 @@ export function AIPanel(): JSX.Element {
               }
             }}
           />
+          <AIImageInputBar
+            images={pendingImages}
+            disabled={isStreamingActiveSession}
+            busy={imageBusy}
+            onUpload={() => void handleUploadImage()}
+            onScreenshot={() => void handleStartScreenshot()}
+            onRemove={(id) => setPendingImages((prev) => prev.filter((img) => img.id !== id))}
+          />
           <div className="ai-input-footer">
             <div className="ai-input-actions">
               <ContextUsageRing
@@ -787,7 +850,7 @@ export function AIPanel(): JSX.Element {
                   icon={Send}
                   label="发送"
                   className="primary-btn icon-action-btn"
-                  disabled={!input.trim()}
+                  disabled={!input.trim() && pendingImages.length === 0}
                   onClick={() => void handleSend()}
                 />
               )}

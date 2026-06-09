@@ -6,9 +6,11 @@ import {
 import type { OpenAiToolSchema } from '../../shared/agent/tools'
 import { getAISettings, normalizeApiKey } from './aiService'
 
+import type { ChatContentPart } from '../../shared/chatPayload'
+
 export interface LlmMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string | null
+  content: string | ChatContentPart[] | null
   tool_call_id?: string
   name?: string
   tool_calls?: Array<{

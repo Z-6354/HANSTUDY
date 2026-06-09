@@ -7,6 +7,8 @@ import {
 } from 'react'
 import type { editor as MonacoEditor } from 'monaco-editor'
 import type { WorkbenchMode } from '@shared/types'
+import { layoutZoomProfile, type LayoutZoomProfile } from '@shared/layoutZoomProfile'
+import { useWorkspaceStore } from '../../../stores/workspaceStore'
 import {
   TXT_BASE_FONT_SIZE,
   TXT_ZOOM_SAVE_DEBOUNCE_MS,
@@ -17,28 +19,39 @@ import {
 
 const ZOOM_STORAGE_KEY = 'hanstudy-txt-zoom'
 
-function zoomStorageKey(filePath: string, slot: WorkbenchMode): string {
-  return `${slot}:${filePath}`
+function zoomStorageKey(filePath: string, slot: WorkbenchMode, layout: LayoutZoomProfile): string {
+  return `${slot}:${layout}:${filePath}`
 }
 
-function loadZoom(filePath: string, slot: WorkbenchMode): number {
+function loadZoom(filePath: string, slot: WorkbenchMode, layout: LayoutZoomProfile): number {
   try {
     const raw = localStorage.getItem(ZOOM_STORAGE_KEY)
     if (!raw) return 1
     const map = JSON.parse(raw) as Record<string, number>
-    const key = zoomStorageKey(filePath, slot)
-    const legacy = map[filePath]
-    return clampTxtZoom(map[key] ?? (slot === 'browse' ? legacy : undefined) ?? 1)
+    const key = zoomStorageKey(filePath, slot, layout)
+    const legacyKey = `${slot}:${filePath}`
+    const legacyFlat = map[filePath]
+    return clampTxtZoom(
+      map[key] ??
+        (layout === 'L1R1' ? map[legacyKey] : undefined) ??
+        (slot === 'browse' && layout === 'L1R1' ? legacyFlat : undefined) ??
+        1
+    )
   } catch {
     return 1
   }
 }
 
-function saveZoom(filePath: string, slot: WorkbenchMode, zoom: number): void {
+function saveZoom(
+  filePath: string,
+  slot: WorkbenchMode,
+  layout: LayoutZoomProfile,
+  zoom: number
+): void {
   try {
     const raw = localStorage.getItem(ZOOM_STORAGE_KEY)
     const map = raw ? (JSON.parse(raw) as Record<string, number>) : {}
-    map[zoomStorageKey(filePath, slot)] = zoom
+    map[zoomStorageKey(filePath, slot, layout)] = zoom
     localStorage.setItem(ZOOM_STORAGE_KEY, JSON.stringify(map))
   } catch {
     // ignore
@@ -72,7 +85,11 @@ export function useTxtZoom({
   flushPendingZoom: () => void
   initialMonacoFontSize: number
 } {
-  const zoomRef = useRef(loadZoom(filePath, viewerSlot))
+  const showSidebar = useWorkspaceStore((s) => s.showSidebar)
+  const showAIPanel = useWorkspaceStore((s) => s.showAIPanel)
+  const layoutProfile = layoutZoomProfile(showSidebar, showAIPanel)
+
+  const zoomRef = useRef(loadZoom(filePath, viewerSlot, layoutProfile))
   const zoomLabelRef = useRef<HTMLSpanElement | null>(null)
   const wheelRafRef = useRef<number | null>(null)
   const wheelAccumRef = useRef({ deltaY: 0, deltaMode: 0 })
@@ -82,6 +99,8 @@ export function useTxtZoom({
   filePathRef.current = filePath
   const viewerSlotRef = useRef(viewerSlot)
   viewerSlotRef.current = viewerSlot
+  const layoutProfileRef = useRef(layoutProfile)
+  layoutProfileRef.current = layoutProfile
   const editModeRef = useRef(editMode)
   editModeRef.current = editMode
 
@@ -95,7 +114,12 @@ export function useTxtZoom({
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {
       saveTimerRef.current = null
-      saveZoom(filePathRef.current, viewerSlotRef.current, zoomRef.current)
+      saveZoom(
+        filePathRef.current,
+        viewerSlotRef.current,
+        layoutProfileRef.current,
+        zoomRef.current
+      )
     }, TXT_ZOOM_SAVE_DEBOUNCE_MS)
   }, [])
 
@@ -165,11 +189,19 @@ export function useTxtZoom({
   )
 
   useEffect(() => {
-    const zoom = loadZoom(filePath, viewerSlot)
+    const prevLayout = layoutProfileRef.current
+    if (prevLayout !== layoutProfile) {
+      saveZoom(filePathRef.current, viewerSlotRef.current, prevLayout, zoomRef.current)
+    }
+    const zoom = loadZoom(filePath, viewerSlot, layoutProfile)
     zoomRef.current = zoom
+    layoutProfileRef.current = layoutProfile
     updateZoomLabel(zoom)
     applyReaderZoom(zoom)
-  }, [filePath, viewerSlot, applyReaderZoom, updateZoomLabel])
+    if (editModeRef.current) {
+      commitMonacoFontSize(zoom)
+    }
+  }, [filePath, viewerSlot, layoutProfile, applyReaderZoom, updateZoomLabel, commitMonacoFontSize])
 
   useEffect(() => {
     if (editMode) {
@@ -240,6 +272,8 @@ export function useTxtZoom({
     zoomIn,
     zoomOut,
     flushPendingZoom,
-    initialMonacoFontSize: Math.round(TXT_BASE_FONT_SIZE * loadZoom(filePath, viewerSlot))
+    initialMonacoFontSize: Math.round(
+      TXT_BASE_FONT_SIZE * loadZoom(filePath, viewerSlot, layoutProfile)
+    )
   }
 }

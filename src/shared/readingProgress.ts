@@ -6,6 +6,8 @@ export type SavedDocumentType =
   | 'web'
   | 'unknown'
 
+import type { LayoutZoomProfile } from './layoutZoomProfile'
+
 export interface ReadingProgress {
   docPath: string
   updatedAt: string
@@ -13,10 +15,12 @@ export interface ReadingProgress {
   pdfPage?: number
   /** PDF 滚动比例 0–1 */
   pdfScrollRatio?: number
-  /** PDF 缩放（浏览模式） */
+  /** PDF 缩放（浏览模式，默认侧栏+AI 均展开时的兼容字段） */
   pdfScale?: number
   /** PDF 缩放（笔记模式，可与浏览模式不同） */
   pdfScaleCompose?: number
+  /** PDF 缩放，按侧栏/AI 面板展开组合分档（L0/L1 × R0/R1） */
+  pdfScaleByLayout?: Partial<Record<LayoutZoomProfile, number>>
   /** 通用滚动像素 */
   scrollTop?: number
   /** 通用滚动比例 0–1 */
@@ -37,6 +41,8 @@ export interface SavedOpenDocument {
 export interface WorkspaceSession {
   documents: SavedOpenDocument[]
   activePath: string | null
+  /** 资源管理器当前根目录（资料库或用户打开的文件夹） */
+  rootFolder?: string | null
   /** 侧栏是否展开 */
   showSidebar?: boolean
   /** AI 面板是否展开 */

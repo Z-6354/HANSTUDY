@@ -6,6 +6,8 @@ import type { SaveWebCredentialInput, WebBookmark, WebCredentialItem, WebHistory
 import type { WebGuestBounds, WebGuestEvent } from '../shared/webGuest'
 import type { McpServerState } from '../shared/mcp/types'
 import type { SkillListItem } from '../shared/skills'
+import type { ChatApiMessage } from '../shared/chatPayload'
+import type { ScreenshotInitPayload } from '../shared/screenshot'
 import { IPC } from '../shared/ipc/channels'
 
 export interface OpenedFileInfo {
@@ -54,11 +56,29 @@ const api = {
     saveJson: (content: string, defaultName: string): Promise<boolean> =>
       ipcRenderer.invoke(IPC.dialog.saveJson, content, defaultName),
     openJson: (): Promise<{ path: string; content: string } | null> =>
-      ipcRenderer.invoke(IPC.dialog.openJson)
+      ipcRenderer.invoke(IPC.dialog.openJson),
+    openImage: (): Promise<{ dataUrl: string; name: string } | null> =>
+      ipcRenderer.invoke(IPC.dialog.openImage)
+  },
+  screenshot: {
+    pickRegion: (): Promise<{ dataUrl: string } | null> =>
+      ipcRenderer.invoke(IPC.screenshot.pickRegion),
+    submit: (dataUrl: string): Promise<void> =>
+      ipcRenderer.invoke(IPC.screenshot.submit, dataUrl),
+    cancel: (): Promise<void> => ipcRenderer.invoke(IPC.screenshot.cancel),
+    notifyReady: (): void => {
+      ipcRenderer.send(IPC.screenshot.ready)
+    },
+    onInit: (cb: (payload: ScreenshotInitPayload) => void): (() => void) => {
+      const handler = (_e: IpcRendererEvent, payload: ScreenshotInitPayload): void => cb(payload)
+      ipcRenderer.on(IPC.screenshot.init, handler)
+      return () => ipcRenderer.removeListener(IPC.screenshot.init, handler)
+    }
   },
   localLibrary: {
     list: (): Promise<FileEntry[]> => ipcRenderer.invoke('localLibrary:list'),
     getPath: (): Promise<string> => ipcRenderer.invoke('localLibrary:getPath'),
+    isPath: (path: string): Promise<boolean> => ipcRenderer.invoke('localLibrary:isPath', path),
     import: (): Promise<{
       imported: Array<{ path: string; name: string; error?: string }>
       canceled: boolean
@@ -172,6 +192,16 @@ const api = {
     save: (settings: AppSettings): Promise<boolean> =>
       ipcRenderer.invoke('appSettings:save', settings)
   },
+  feedback: {
+    submit: (payload: {
+      category: string
+      title: string
+      description: string
+      contact?: string
+      clientId: string
+    }): Promise<{ ok: boolean; id?: string; message: string }> =>
+      ipcRenderer.invoke(IPC.feedback.submit, payload)
+  },
   web: {
     openExternal: (url: string): Promise<boolean> => ipcRenderer.invoke('web:openExternal', url),
     runDiagnostics: (): Promise<WebDiagnosticReport> => ipcRenderer.invoke('web:runDiagnostics'),
@@ -254,6 +284,10 @@ const api = {
       canGoForward: boolean
     }> => ipcRenderer.invoke('webGuest:getState'),
     openDevTools: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('webGuest:openDevTools'),
+    setZoomFactor: (factor: number): Promise<number> =>
+      ipcRenderer.invoke(IPC.webGuest.setZoomFactor, factor).then((r: { zoomFactor: number }) => r.zoomFactor),
+    getZoomFactor: (): Promise<number> =>
+      ipcRenderer.invoke(IPC.webGuest.getZoomFactor).then((r: { zoomFactor: number }) => r.zoomFactor),
     onEvent: (callback: (event: WebGuestEvent) => void): (() => void) => {
       const handler = (_: IpcRendererEvent, payload: WebGuestEvent): void => callback(payload)
       ipcRenderer.on(IPC.webGuest.event, handler)
@@ -265,8 +299,13 @@ const api = {
       jarAvailable: boolean
       javaRunning: boolean
       storageMode: 'java' | 'node'
+      javaPort: number
       fallbackReason?: string
     }> => ipcRenderer.invoke('backend:getStatus')
+  },
+  app: {
+    getEnvironment: (): Promise<import('../shared/appEnvironment').AppEnvironmentInfo> =>
+      ipcRenderer.invoke('app:getEnvironment')
   },
   system: {
     getMemory: (): Promise<{
@@ -294,7 +333,16 @@ const api = {
     save: (
       progress: Partial<import('../shared/readingProgress').ReadingProgress> & { docPath: string }
     ): Promise<import('../shared/readingProgress').ReadingProgress> =>
-      ipcRenderer.invoke('readingProgress:save', progress)
+      ipcRenderer.invoke('readingProgress:save', progress),
+    listIndex: (): Promise<Record<string, import('../shared/fileFavorites').ReadingProgressIndexEntry>> =>
+      ipcRenderer.invoke('readingProgress:listIndex')
+  },
+  fileFavorites: {
+    list: (): Promise<string[]> => ipcRenderer.invoke('fileFavorites:list'),
+    toggle: (filePath: string): Promise<boolean> => ipcRenderer.invoke('fileFavorites:toggle', filePath),
+    remove: (filePath: string): Promise<boolean> => ipcRenderer.invoke('fileFavorites:remove', filePath),
+    rename: (oldPath: string, newPath: string): Promise<boolean> =>
+      ipcRenderer.invoke('fileFavorites:rename', { oldPath, newPath })
   },
   workspaceSession: {
     get: (): Promise<import('../shared/readingProgress').WorkspaceSession | null> =>
@@ -317,7 +365,7 @@ const api = {
   ai: {
     chat: (
       requestId: string,
-      messages: Array<{ role: string; content: string }>,
+      messages: ChatApiMessage[],
       contextText?: string,
       documentContext?: { fileName: string; content: string },
       chatMode?: 'agent' | 'chat' | 'reading',

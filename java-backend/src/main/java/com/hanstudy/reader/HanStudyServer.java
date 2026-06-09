@@ -12,14 +12,31 @@ import java.util.Map;
 
 public class HanStudyServer {
     private static final Gson GSON = new Gson();
-    private static final int PORT = 17890;
+    private static final int DEFAULT_PORT = 17890;
 
     private final AnnotationService annotationService;
     private Javalin app;
+    private final int port;
 
     public HanStudyServer() {
         DataPaths dataPaths = new DataPaths();
         this.annotationService = new AnnotationService(dataPaths);
+        this.port = resolvePort();
+    }
+
+    private static int resolvePort() {
+        String env = System.getenv("HANSTUDY_JAVA_PORT");
+        if (env != null && !env.isBlank()) {
+            try {
+                int parsed = Integer.parseInt(env.trim());
+                if (parsed > 0 && parsed <= 65535) {
+                    return parsed;
+                }
+            } catch (NumberFormatException ignored) {
+                // fall through
+            }
+        }
+        return DEFAULT_PORT;
     }
 
     public void start() {
@@ -42,8 +59,8 @@ public class HanStudyServer {
                         System.exit(0);
                     }).start();
                 })
-                .start("127.0.0.1", PORT);
-        System.out.println("HAN Study Java backend listening on 127.0.0.1:" + PORT);
+                .start("127.0.0.1", port);
+        System.out.println("HAN Study Java backend listening on 127.0.0.1:" + port);
     }
 
     public void stop() {

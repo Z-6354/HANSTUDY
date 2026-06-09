@@ -1,4 +1,7 @@
 import type { ChatContextSnapshot } from './aiContext'
+import type { ChatImageAttachment } from './chatPayload'
+
+export type { ChatImageAttachment } from './chatPayload'
 
 export interface TextRange {
   startLine: number
@@ -40,6 +43,8 @@ export interface ChatMessage {
   isError?: boolean
   /** Agent 模式工具调用步骤（流式结束后保留） */
   toolSteps?: ChatToolStepRecord[]
+  /** 用户消息附带的图片（data URL） */
+  images?: ChatImageAttachment[]
 }
 
 export interface TextSelectionContext {
@@ -54,4 +59,4 @@ export interface FileEntry {
   isDirectory: boolean
 }
 
-export type WorkbenchMode = 'browse' | 'compose'
+export type WorkbenchMode = 'browse' | 'compose' | 'generate' | 'feedback'

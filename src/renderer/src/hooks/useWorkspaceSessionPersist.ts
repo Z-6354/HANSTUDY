@@ -17,6 +17,7 @@ function buildSession(state: ReturnType<typeof useWorkspaceStore.getState>): Wor
   return {
     documents,
     activePath: active && active.path !== SETTINGS_DOC_PATH ? active.path : documents[0]?.path ?? null,
+    rootFolder: state.rootFolder,
     showSidebar: state.showSidebar,
     showAIPanel: state.showAIPanel,
     sidebarTab: state.sidebarTab,
@@ -50,6 +51,16 @@ export function useWorkspaceSessionPersist(): void {
       if (!session) return
 
       applyLayoutFromSession(session)
+
+      if (session.rootFolder) {
+        try {
+          const items = await window.api.fs.listDirectory(session.rootFolder)
+          useWorkspaceStore.getState().setRootFolder(session.rootFolder, items)
+        } catch {
+          // 目录不可用，由 FileExplorer 回退到默认资料库
+        }
+      }
+
       if (!session.documents?.length) return
 
       const store = useWorkspaceStore.getState()
@@ -111,6 +122,7 @@ export function useWorkspaceSessionPersist(): void {
       if (
         state.documents === prev.documents &&
         state.activeDocumentId === prev.activeDocumentId &&
+        state.rootFolder === prev.rootFolder &&
         state.showSidebar === prev.showSidebar &&
         state.showAIPanel === prev.showAIPanel &&
         state.sidebarTab === prev.sidebarTab

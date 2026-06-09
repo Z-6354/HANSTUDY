@@ -9,6 +9,8 @@ import {
   modelSupportsThinking
 } from '../../shared/aiProviders'
 import { getSystemPromptForMode } from '../../shared/chatModes'
+import type { ChatApiMessage } from '../../shared/chatPayload'
+import { extractMessageText } from '../../shared/chatPayload'
 import type { AISettings, ChatMode } from '../../shared/types'
 import { resolveSkillsForChat } from '../skill/skillService'
 
@@ -218,7 +220,7 @@ function buildThinkingBody(
 }
 
 export interface ChatRequest {
-  messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>
+  messages: ChatApiMessage[]
   contextText?: string
   documentContext?: { fileName: string; content: string }
   chatMode?: ChatMode
@@ -245,8 +247,9 @@ export async function streamChat(
   const providerId = settings.provider || inferProviderId(baseUrl)
   const chatMode = request.chatMode ?? 'chat'
 
-  const lastUserMessage =
+  const lastUserMessage = extractMessageText(
     [...request.messages].reverse().find((m) => m.role === 'user')?.content ?? ''
+  )
   const skillContext = await resolveSkillsForChat(
     lastUserMessage,
     chatMode,

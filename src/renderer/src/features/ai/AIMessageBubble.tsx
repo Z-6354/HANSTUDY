@@ -1,11 +1,13 @@
 import { useMemo } from 'react'
 import type { ChatContextSnapshot } from '@shared/aiContext'
+import type { ChatImageAttachment } from '@shared/types'
 import { renderMarkdownHtml } from '../../utils/markdown'
 import { MessageContextChips } from './MessageContextChips'
 
 interface AIMessageBubbleProps {
   role: 'user' | 'assistant'
   content: string
+  images?: ChatImageAttachment[]
   isStreaming?: boolean
   isError?: boolean
   contextItems?: ChatContextSnapshot[]
@@ -17,6 +19,7 @@ interface AIMessageBubbleProps {
 export function AIMessageBubble({
   role,
   content,
+  images,
   isStreaming,
   isError,
   contextItems,
@@ -37,7 +40,22 @@ export function AIMessageBubble({
     <div className={`ai-bubble-row ai-bubble-row-${role}`} onContextMenu={onContextMenu}>
       <div className={`ai-bubble ai-bubble-${role}${isError ? ' ai-bubble-error' : ''}`}>
         {role === 'user' ? (
-          <div className="ai-bubble-text">{content}</div>
+          <>
+            {content.trim() && <div className="ai-bubble-text">{content}</div>}
+            {images && images.length > 0 && (
+              <div className="ai-bubble-images">
+                {images.map((img) => (
+                  <img
+                    key={img.id}
+                    className="ai-bubble-image"
+                    src={img.dataUrl}
+                    alt={img.name ?? '用户发送的图片'}
+                    title={img.name}
+                  />
+                ))}
+              </div>
+            )}
+          </>
         ) : isError ? (
           <div className="ai-bubble-text ai-bubble-error-text">{content}</div>
         ) : showTyping ? (

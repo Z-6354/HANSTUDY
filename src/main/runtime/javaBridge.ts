@@ -2,8 +2,10 @@ import { app } from 'electron'
 import { ChildProcess, spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { join } from 'path'
+import { resolveJavaBackendPort } from '../config/appEnvironment'
 
-const BASE_URL = 'http://127.0.0.1:17890'
+const JAVA_BACKEND_PORT = resolveJavaBackendPort()
+const BASE_URL = `http://127.0.0.1:${JAVA_BACKEND_PORT}`
 const HEALTH_TIMEOUT_MS = 30_000
 const HEALTH_INTERVAL_MS = 300
 
@@ -29,6 +31,7 @@ export interface BackendStatus {
   jarAvailable: boolean
   javaRunning: boolean
   storageMode: 'java' | 'node'
+  javaPort: number
   fallbackReason?: string
 }
 
@@ -79,12 +82,10 @@ async function waitForHealth(): Promise<void> {
     if (await probeHealth()) return
     await new Promise((r) => setTimeout(r, HEALTH_INTERVAL_MS))
   }
-  if (await probeHealth()) {
-    throw new Error(
-      '端口 17890 已被占用，可能已有 HAN Study Reader 在运行。请关闭其他实例后重试。'
-    )
-  }
-  throw new Error('Java 后端健康检查超时（30s）')
+  if (await probeHealth()) return
+  throw new Error(
+    `Java 后端健康检查超时（30s）。若端口 ${JAVA_BACKEND_PORT} 已被占用，请关闭冲突实例或设置 HANSTUDY_JAVA_PORT。`
+  )
 }
 
 /** JAR is present in dev or packaged layout (may not be running yet). */
@@ -103,6 +104,7 @@ export function getBackendStatus(): BackendStatus {
     jarAvailable: hasJavaBackendJar(),
     javaRunning: useJavaBackend,
     storageMode: useJavaBackend ? 'java' : 'node',
+    javaPort: JAVA_BACKEND_PORT,
     fallbackReason
   }
 }
@@ -140,6 +142,7 @@ export async function startJavaBackend(): Promise<void> {
     javaProcess = spawn(javaBin, ['-jar', jarPath], {
       env: {
         ...process.env,
+        HANSTUDY_JAVA_PORT: String(JAVA_BACKEND_PORT),
         HANSTUDY_USER_DATA: app.getPath('userData'),
         JAVA_TOOL_OPTIONS: [
           process.env.JAVA_TOOL_OPTIONS,

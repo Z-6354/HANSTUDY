@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Globe, Loader2, Lock, Search } from 'lucide-react'
+import { ChevronUp, Globe, Loader2, Lock, Search } from 'lucide-react'
 import { searchEngineLabel } from '@shared/appSettings'
 import { resolveWebInput } from '@shared/webCrop'
+import { IconButton } from '../../components/IconButton'
 import { useAppSettingsStore } from '../../stores/appSettingsStore'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
 
@@ -11,7 +12,8 @@ export function GlobalSearchBar(): JSX.Element {
     activeDocumentId,
     webSessions,
     openWebPage,
-    dispatchWebNav
+    dispatchWebNav,
+    toggleLayoutPanel
   } = useWorkspaceStore()
   const searchEngine = useAppSettingsStore((s) => s.searchEngine)
 
@@ -87,6 +89,13 @@ export function GlobalSearchBar(): JSX.Element {
           </span>
         )}
       </form>
+      <IconButton
+        icon={ChevronUp}
+        label="收起搜索与模式栏"
+        size={14}
+        className="global-search-collapse-btn"
+        onClick={() => toggleLayoutPanel('globalSearchBar')}
+      />
     </div>
   )
 }

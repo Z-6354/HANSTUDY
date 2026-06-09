@@ -1,15 +1,17 @@
 import { useCallback, useEffect } from 'react'
 import { Allotment } from 'allotment'
 import { FilePlus, FolderOpen } from 'lucide-react'
+import { APP_NAME, APP_TAGLINE } from '@shared/appMeta'
 import { IconButton } from '../../components/IconButton'
 import { DocumentNotePanel } from '../../features/notes/DocumentNotePanel'
+import { GenerateModePanel } from '../../features/generate/GenerateModePanel'
 import { DocumentFindBar } from '../../features/reader/find/DocumentFindBar'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
 import type { WorkbenchMode } from '@shared/types'
 import { DocumentViewerPane } from './DocumentViewerPane'
-import { GlobalSearchBar } from './GlobalSearchBar'
+import { EditorTopChrome } from './EditorTopChrome'
 import { TabBar } from './TabBar'
-import { WorkbenchModeBar } from './WorkbenchModeBar'
+import { FeedbackPanel } from '../../features/feedback/FeedbackPanel'
 
 export function EditorArea(): JSX.Element {
   const {
@@ -56,7 +58,8 @@ export function EditorArea(): JSX.Element {
     if (documents.length === 0) {
       return (
         <div className="empty-state">
-          <h2>欢迎使用 HAN Study Reader</h2>
+          <h2>欢迎使用 {APP_NAME}</h2>
+          <p className="empty-state-tagline">{APP_TAGLINE}</p>
           <p>打开文档阅读，或在侧栏「笔记」中记笔记</p>
           <p className="empty-state-hint">
             {workbenchMode === 'compose'
@@ -108,16 +111,26 @@ export function EditorArea(): JSX.Element {
   }
 
   const isCompose = workbenchMode === 'compose'
+  const isGenerate = workbenchMode === 'generate'
+  const isFeedback = workbenchMode === 'feedback'
+  const isSettingsDoc = activeDoc?.type === 'settings'
 
   return (
     <div className="editor-area">
-      <GlobalSearchBar />
-      <DocumentFindBar />
-      <WorkbenchModeBar />
-      {showTabBar && <TabBar onOpenFile={() => void handleOpenFile()} />}
+      <EditorTopChrome />
+      {!isFeedback && !isGenerate && <DocumentFindBar />}
+      {!isFeedback && !isGenerate && showTabBar && <TabBar onOpenFile={() => void handleOpenFile()} />}
 
-      {/* 浏览 / 笔记两模式始终挂载；笔记列 hidden 时不占宽，内容保留在内存 */}
-      <Allotment className="workbench-split">
+      {isFeedback ? (
+        <div className="feedback-pane">
+          <FeedbackPanel />
+        </div>
+      ) : isGenerate ? (
+        <div className="generate-mode-pane generate-mode-pane--full">
+          <GenerateModePanel />
+        </div>
+      ) : (
+        <Allotment className="workbench-split">
         <Allotment.Pane minSize={280}>
           <div className="viewer-slot-stack">
             <div
@@ -132,12 +145,13 @@ export function EditorArea(): JSX.Element {
             </div>
           </div>
         </Allotment.Pane>
-        <Allotment.Pane visible={isCompose} preferredSize="45%" minSize={240}>
+        <Allotment.Pane visible={isCompose && !isSettingsDoc} preferredSize="45%" minSize={280}>
           <div className="compose-note-pane">
             <DocumentNotePanel doc={activeDoc ?? null} />
           </div>
         </Allotment.Pane>
       </Allotment>
+      )}
     </div>
   )
 }

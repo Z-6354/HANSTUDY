@@ -26,6 +26,14 @@ export default defineConfig({
         '@shared': resolve('src/shared')
       }
     },
-    plugins: [react()]
+    plugins: [react()],
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve(__dirname, 'src/renderer/index.html'),
+          screenshotOverlay: resolve(__dirname, 'src/renderer/screenshot-overlay.html')
+        }
+      }
+    }
   }
 })

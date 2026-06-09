@@ -4,6 +4,7 @@ import { join } from 'path'
 
 import type { WebGuestEvent } from '../../shared/webGuest'
 import { IPC } from '../../shared/ipc/channels'
+import { clampWebZoom, WEB_ZOOM_STEP } from '../../shared/webZoom'
 import {
   isBlankGuestUrl,
   isWebNavigableUrl,
@@ -91,6 +92,22 @@ function bindGuestEvents(view: BrowserView, docId: string): void {
       void wc.loadURL(url)
     }
     return { action: 'deny' }
+  })
+
+  wc.on('before-input-event', (event, input) => {
+    if (input.type !== 'mouseWheel') return
+    if (!input.control && !input.meta) return
+    event.preventDefault()
+    const deltaY = (input as Electron.Input & { deltaY?: number }).deltaY ?? 0
+    const step = deltaY >= 0 ? -WEB_ZOOM_STEP : WEB_ZOOM_STEP
+    const next = clampWebZoom(wc.getZoomFactor() + step)
+    wc.setZoomFactor(next)
+    emit({
+      type: 'zoom-changed',
+      docId,
+      url: wc.getURL(),
+      zoomFactor: next
+    })
   })
 }
 
@@ -279,6 +296,32 @@ export function stopFindInWebGuest(): void {
 
 export function openWebGuestDevTools(): void {
   getActiveGuest()?.webContents.openDevTools({ mode: 'detach' })
+}
+
+export function setWebGuestZoomFactor(factor: number): number {
+  const guestView = getActiveGuest()
+  if (!guestView) return clampWebZoom(factor)
+  const clamped = clampWebZoom(factor)
+  guestView.webContents.setZoomFactor(clamped)
+  return clamped
+}
+
+export function getWebGuestZoomFactor(): number {
+  const guestView = getActiveGuest()
+  if (!guestView) return 1
+  return clampWebZoom(guestView.webContents.getZoomFactor())
+}
+
+export function getActiveGuestLayerForCapture(): {
+  webContents: WebContents
+  bounds: Rectangle
+} | null {
+  const guestView = getActiveGuest()
+  if (!guestView || !hostWindow) return null
+  return {
+    webContents: guestView.webContents,
+    bounds: guestView.getBounds()
+  }
 }
 
 export function isWebGuestAttached(): boolean {

@@ -3,8 +3,11 @@ import type { IpcMainInvokeEvent } from 'electron'
 import { stat, writeFile } from 'fs/promises'
 import { dirname } from 'path'
 import { IPC } from '../../shared/ipc/channels'
+import type { ChatApiMessage } from '../../shared/chatPayload'
 import type { AppSettings } from '../../shared/appSettings'
 import type { AISettings } from '../../shared/types'
+import { pickScreenshotRegion, submitScreenshotRegion, cancelScreenshotRegion, registerScreenshotOverlayHandlers } from '../infra/screenshotOverlayService'
+import { readImageFileAsDataUrl } from '../infra/imagePayloadService'
 import { getAppContext } from '../bootstrap/AppContext'
 import { lockPageZoomForWindow } from '../bootstrap/pageZoomLock'
 import { ipcRegistry } from './IpcRegistry'
@@ -34,12 +37,21 @@ import {
   renameNotebook,
   saveNotebook
 } from '../infra/notebooksStore'
+import { getFeedbackClientMeta, submitFeedback } from '../feedback/feedbackService'
+import { getAppEnvironmentInfo, isOtherEnvironmentPath } from '../config/appEnvironment'
 import { getAppSettings, saveAppSettings } from '../config/appSettingsService'
 import { getBackendStatus } from '../runtime/javaBridge'
 import { buildFullMemorySnapshot } from '../infra/memoryDiagnostics'
 import {
+  listFavoritePaths,
+  removeFavoritePath,
+  renameFavoritePath,
+  toggleFavoritePath
+} from '../infra/fileFavoritesService'
+import {
   getReadingProgress,
   getWorkspaceSession,
+  listReadingProgressIndex,
   saveReadingProgress,
   saveWorkspaceSession
 } from '../infra/readingProgressService'
@@ -75,6 +87,7 @@ import {
 import {
   ensureLocalLibraryDir,
   importFilesToLocalLibrary,
+  isLocalLibraryPath,
   listLocalLibraryFiles
 } from '../infra/localLibraryService'
 import { logWebDiagnostics, probeWebUrl, runWebDiagnostics } from '../web/webDiagnosticsService'
@@ -114,12 +127,16 @@ import {
   stopFindInWebGuest,
   setWebGuestBounds,
   webGuestGoBack,
-  webGuestGoForward
+  webGuestGoForward,
+  setWebGuestZoomFactor,
+  getWebGuestZoomFactor
 } from '../web/webGuestService'
 import type { SaveWebCredentialInput } from '../../shared/webLibrary'
 import { registerHitlIpc } from '../hitl/HitlToolRegistry'
 
 export function registerAllHandlers(): void {
+  registerScreenshotOverlayHandlers()
+
   const ctx = getAppContext()
   if (ctx.hitlRegistry) registerHitlIpc(ipcMain, ctx.hitlRegistry)
 
@@ -145,6 +162,20 @@ export function registerAllHandlers(): void {
   ipcRegistry.register(IPC.readingProgress.save, async (progress: unknown) =>
     saveReadingProgress(progress as Parameters<typeof saveReadingProgress>[0])
   )
+  ipcRegistry.register(IPC.readingProgress.listIndex, async () => listReadingProgressIndex())
+  ipcRegistry.register(IPC.fileFavorites.list, async () => listFavoritePaths())
+  ipcRegistry.register(IPC.fileFavorites.toggle, async (filePath: unknown) =>
+    toggleFavoritePath(String(filePath ?? ''))
+  )
+  ipcRegistry.register(IPC.fileFavorites.remove, async (filePath: unknown) => {
+    await removeFavoritePath(String(filePath ?? ''))
+    return true
+  })
+  ipcRegistry.register(IPC.fileFavorites.rename, async (payload: unknown) => {
+    const { oldPath, newPath } = (payload ?? {}) as { oldPath?: string; newPath?: string }
+    await renameFavoritePath(String(oldPath ?? ''), String(newPath ?? ''))
+    return true
+  })
   ipcRegistry.register(IPC.workspaceSession.get, async () => getWorkspaceSession())
   ipcRegistry.register(IPC.workspaceSession.save, async (session: unknown) => {
     await saveWorkspaceSession(session as Parameters<typeof saveWorkspaceSession>[0])
@@ -167,6 +198,9 @@ export function registerAllHandlers(): void {
     })
     if (result.canceled || result.filePaths.length === 0) return null
     const folderPath = result.filePaths[0]
+    if (isOtherEnvironmentPath(folderPath)) {
+      throw new Error('该文件夹属于另一套环境（用户/测试）的资料库，请在本环境使用对应的资料库目录。')
+    }
     ctx.setWorkspaceRoot(folderPath)
     const files = await collectFilesFromDirectory(folderPath)
     return { path: folderPath, files }
@@ -197,6 +231,9 @@ export function registerAllHandlers(): void {
     ctx.setWorkspaceRoot(root)
     return root
   })
+  ipcRegistry.register(IPC.localLibrary.isPath, async (targetPath: unknown) =>
+    isLocalLibraryPath(String(targetPath ?? ''))
+  )
   ipcRegistry.register(IPC.localLibrary.import, async () => {
     const root = await ensureLocalLibraryDir()
     ctx.setWorkspaceRoot(root)
@@ -240,6 +277,38 @@ export function registerAllHandlers(): void {
     const { readFile: readFileFs } = await import('node:fs/promises')
     const content = await readFileFs(filePath, 'utf-8')
     return { path: filePath, content }
+  })
+
+  ipcRegistry.register(IPC.dialog.openImage, async () => {
+    const result = await dialog.showOpenDialog(ctx.mainWindow!, {
+      title: '选择图片',
+      properties: ['openFile'],
+      filters: [
+        {
+          name: '图片',
+          extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp']
+        }
+      ]
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    const filePath = result.filePaths[0]!
+    const image = await readImageFileAsDataUrl(filePath)
+    return image
+  })
+
+  ipcRegistry.register(IPC.screenshot.pickRegion, async () => {
+    if (!ctx.mainWindow) {
+      throw new Error('主窗口未就绪')
+    }
+    return pickScreenshotRegion(ctx.mainWindow)
+  })
+
+  ipcRegistry.register(IPC.screenshot.submit, async (dataUrl: unknown) => {
+    submitScreenshotRegion(String(dataUrl ?? ''))
+  })
+
+  ipcRegistry.register(IPC.screenshot.cancel, async () => {
+    cancelScreenshotRegion()
   })
 
   ipcRegistry.register(IPC.fs.listDirectory, async (dirPath: unknown) => listDirectory(String(dirPath)))
@@ -382,6 +451,26 @@ export function registerAllHandlers(): void {
     return true
   })
 
+  ipcRegistry.register(IPC.feedback.submit, async (payload: unknown) => {
+    const p = payload as {
+      category: string
+      title: string
+      description: string
+      contact?: string
+      clientId: string
+    }
+    const meta = getFeedbackClientMeta()
+    return submitFeedback({
+      category: p.category as 'bug' | 'feature' | 'question' | 'other',
+      title: p.title,
+      description: p.description,
+      contact: p.contact,
+      appVersion: meta.appVersion,
+      platform: meta.platform,
+      clientId: p.clientId
+    })
+  })
+
   ipcRegistry.register(IPC.skills.list, async () => listSkills())
   ipcRegistry.register(IPC.skills.enable, async (name: unknown) => {
     await enableSkill(String(name))
@@ -427,6 +516,7 @@ export function registerAllHandlers(): void {
   registerMcpHandlers()
 
   ipcRegistry.register(IPC.backend.getStatus, async () => getBackendStatus())
+  ipcRegistry.register(IPC.app.getEnvironment, async () => getAppEnvironmentInfo())
 }
 
 function registerAiHandlers(): void {
@@ -447,7 +537,7 @@ function registerAiHandlers(): void {
       const controller = new AbortController()
       ctx.activeAiAborts.set(reqId, controller)
 
-      const msgList = messages as Array<{ role: string; content: string }>
+      const msgList = messages as ChatApiMessage[]
       const mode = (chatMode as import('../../shared/types').ChatMode | undefined) ?? 'chat'
       const docCtx = documentContext as { fileName: string; content: string } | undefined
 
@@ -460,7 +550,7 @@ function registerAiHandlers(): void {
           }
           const result = await ctx.agent.runTurn(
             {
-              messages: msgList as Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
+              messages: msgList,
               contextText: contextText ? String(contextText) : undefined,
               documentContext: docCtx,
               excludedSkills: excludedSkills as string[] | undefined,
@@ -481,7 +571,7 @@ function registerAiHandlers(): void {
 
         const result = await streamChat(
           {
-            messages: msgList as Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
+            messages: msgList,
             contextText: contextText ? String(contextText) : undefined,
             documentContext: docCtx,
             chatMode: mode,
@@ -645,6 +735,14 @@ function registerWebHandlers(): void {
     openWebGuestDevTools()
     return { ok: true }
   })
+  ipcRegistry.register(IPC.webGuest.setZoomFactor, async (factor: unknown) => ({
+    ok: true,
+    zoomFactor: setWebGuestZoomFactor(Number(factor))
+  }))
+  ipcRegistry.register(IPC.webGuest.getZoomFactor, async () => ({
+    ok: true,
+    zoomFactor: getWebGuestZoomFactor()
+  }))
 }
 
 function registerMcpHandlers(): void {

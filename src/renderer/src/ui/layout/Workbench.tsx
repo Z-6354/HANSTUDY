@@ -1,5 +1,6 @@
 import { Allotment } from 'allotment'
 import 'allotment/dist/style.css'
+import { useBrowseModeNoteInsert } from '../../hooks/useBrowseModeNoteInsert'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
 import { AIRail } from './AIRail'
 import { AIPanel } from '../../features/ai/AIPanel'
@@ -8,6 +9,8 @@ import { SideBar } from './SideBar'
 import { SidebarRail } from './SidebarRail'
 
 export function Workbench(): JSX.Element {
+  useBrowseModeNoteInsert()
+
   const showAIPanel = useWorkspaceStore((s) => s.showAIPanel)
   const showSidebar = useWorkspaceStore((s) => s.showSidebar)
   const focusMode = useWorkspaceStore((s) => s.focusMode)

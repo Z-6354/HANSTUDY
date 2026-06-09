@@ -17,6 +17,7 @@ export type WebGuestEvent =
       errorDescription: string
       url: string
     }
+  | { type: 'zoom-changed'; docId: string; url: string; zoomFactor: number }
 
 export interface WebGuestBounds {
   x: number

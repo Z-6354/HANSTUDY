@@ -1,3 +1,5 @@
+import type { ChatApiMessage } from '../../shared/chatPayload'
+import { extractMessageText } from '../../shared/chatPayload'
 import type { ToolInvocation } from '../../shared/agent/tools'
 
 import type { HitlToolRegistry } from '../hitl/HitlToolRegistry'
@@ -12,7 +14,7 @@ import { resolveSkillsForChat } from '../skill/skillService'
 
 export interface AgentTurnRequest {
 
-  messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>
+  messages: ChatApiMessage[]
 
   contextText?: string
 
@@ -68,9 +70,9 @@ export class Agent {
 
   ): Promise<{ text: string; activeSkills: Array<{ name: string; description: string }> }> {
 
-    const lastUser =
-
+    const lastUser = extractMessageText(
       [...request.messages].reverse().find((m) => m.role === 'user')?.content ?? ''
+    )
 
     const skillContext = await resolveSkillsForChat(lastUser, 'agent', request.excludedSkills)
 
@@ -108,7 +110,10 @@ export class Agent {
 
         .filter((m) => m.role !== 'system')
 
-        .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
+        .map((m) => ({
+          role: m.role as 'user' | 'assistant',
+          content: m.content
+        }))
 
     ]
 

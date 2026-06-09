@@ -1,4 +1,4 @@
-import { app, dialog, session } from 'electron'
+import { app, session } from 'electron'
 import { hasJavaBackendJar, startJavaBackend, stopJavaBackend } from '../runtime/javaBridge'
 import { initSkillService } from '../skill/skillService'
 import { registerBuiltinTools } from '../tool/builtins/registerBuiltinTools'
@@ -9,10 +9,6 @@ import { ensureLocalLibraryDir } from '../infra/localLibraryService'
 import { destroyWebGuest } from '../web/webGuestService'
 
 export async function startApp(): Promise<void> {
-  if (process.platform === 'win32') {
-    app.setAppUserModelId('com.hanstudy.reader')
-  }
-
   setupWebviewSession()
   const ctx = getAppContext()
 
@@ -24,10 +20,7 @@ export async function startApp(): Promise<void> {
       const message = err instanceof Error ? err.message : String(err)
       console.error('[bootstrap] Java backend failed:', message)
       if (app.isPackaged) {
-        dialog.showErrorBox(
-          'Java 后端启动失败',
-          `Java 后端未能启动，部分功能将不可用。\n\n${message}`
-        )
+        console.warn('[bootstrap] Java backend unavailable in packaged app:', message)
       }
     }
   }
@@ -43,7 +36,11 @@ export async function startApp(): Promise<void> {
   const localLibraryRoot = await ensureLocalLibraryDir()
   ctx.setWorkspaceRoot(localLibraryRoot)
   ctx.initAgentStack()
-  await ctx.mcpManager.startAll(ctx.toolRegistry)
+  try {
+    await ctx.mcpManager.startAll(ctx.toolRegistry)
+  } catch (err) {
+    console.error('[bootstrap] MCP servers failed to start:', err)
+  }
 
   registerAllHandlers()
   createMainWindow()

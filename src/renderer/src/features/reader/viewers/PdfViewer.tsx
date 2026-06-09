@@ -2,6 +2,8 @@ import { ZoomIn, ZoomOut } from 'lucide-react'
 import * as pdfjsLib from 'pdfjs-dist'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toUint8Array } from '@shared/binary'
+import { layoutZoomProfile } from '@shared/layoutZoomProfile'
+import { pdfScaleProgressPatch, savedPdfScale } from '@shared/pdfLayoutZoom'
 import type { ReadingProgress } from '@shared/readingProgress'
 import type { WorkbenchMode } from '@shared/types'
 import { IconButton } from '../../../components/IconButton'
@@ -52,23 +54,6 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url
 ).toString()
 
-function savedPdfScale(
-  saved: ReadingProgress | null | undefined,
-  slot: WorkbenchMode
-): number | undefined {
-  if (slot === 'compose') {
-    return saved?.pdfScaleCompose ?? saved?.pdfScale
-  }
-  return saved?.pdfScale
-}
-
-function pdfScaleProgressPatch(
-  slot: WorkbenchMode,
-  scale: number
-): Pick<ReadingProgress, 'pdfScale' | 'pdfScaleCompose'> {
-  return slot === 'compose' ? { pdfScaleCompose: scale } : { pdfScale: scale }
-}
-
 interface PdfViewerProps {
   filePath: string
   isActive?: boolean
@@ -110,6 +95,12 @@ export function PdfViewer({
   const outlineOpenRef = useRef(false)
   const edgeCommitRafRef = useRef<number | null>(null)
   const progressRestoredRef = useRef(false)
+  const savedProgressRef = useRef<ReadingProgress | null>(null)
+
+  const showSidebar = useWorkspaceStore((s) => s.showSidebar)
+  const showAIPanel = useWorkspaceStore((s) => s.showAIPanel)
+  const layoutProfile = layoutZoomProfile(showSidebar, showAIPanel)
+  const layoutProfileRef = useRef(layoutProfile)
 
   const SIDE_PANEL_SETTLE_MS = 80
 
@@ -130,9 +121,15 @@ export function PdfViewer({
   const [pdfReady, setPdfReady] = useState(false)
   const [isRescaling, setIsRescaling] = useState(false)
 
-  const { saveProgress, loadProgress, isRestoringRef } = useReadingProgress(
+  const { saveProgress, flushProgress, loadProgress, isRestoringRef } = useReadingProgress(
     filePath,
     isActive && !loading
+  )
+
+  const patchPdfScale = useCallback(
+    (scaleVal: number) =>
+      pdfScaleProgressPatch(viewerSlot, layoutProfile, scaleVal, savedProgressRef.current),
+    [layoutProfile, viewerSlot]
   )
 
   scaleRef.current = scale
@@ -449,7 +446,7 @@ export function PdfViewer({
             saveProgress({
               pdfPage: pageNo,
               pdfScrollRatio: root.scrollTop / max,
-              ...pdfScaleProgressPatch(viewerSlot, scaleRef.current)
+              ...patchPdfScale(scaleRef.current)
             })
           }
         }
@@ -467,7 +464,7 @@ export function PdfViewer({
         applyScroll()
       })()
     },
-    [queuePageRender, ensurePageRendered, saveProgress, isRestoringRef, viewerSlot]
+    [queuePageRender, ensurePageRendered, saveProgress, isRestoringRef, patchPdfScale]
   )
 
   const tryRunPendingNavigation = useCallback((): void => {
@@ -637,8 +634,8 @@ export function PdfViewer({
 
   useEffect(() => {
     if (!layoutReady || isRestoringRef.current) return
-    saveProgress({ ...pdfScaleProgressPatch(viewerSlot, scale), pdfPage: currentPage })
-  }, [scale, currentPage, layoutReady, saveProgress, isRestoringRef, viewerSlot])
+    saveProgress({ ...patchPdfScale(scale), pdfPage: currentPage })
+  }, [scale, currentPage, layoutReady, saveProgress, isRestoringRef, patchPdfScale])
 
   useEffect(() => {
     let cancelled = false
@@ -663,7 +660,8 @@ export function PdfViewer({
         if (cancelled) return
         const saved = await window.api.readingProgress.get(filePath)
         if (cancelled) return
-        const initialScale = savedPdfScale(saved, viewerSlot)
+        savedProgressRef.current = saved
+        const initialScale = savedPdfScale(saved, viewerSlot, layoutProfileRef.current)
         if (initialScale != null) {
           const next = clampPdfScale(initialScale)
           setScale(next)
@@ -1025,7 +1023,7 @@ export function PdfViewer({
           saveProgress({
             pdfScrollRatio: ratio,
             pdfPage: currentPageRef.current,
-            ...pdfScaleProgressPatch(viewerSlot, scaleRef.current)
+            ...patchPdfScale(scaleRef.current)
           })
         }
       })
@@ -1037,7 +1035,58 @@ export function PdfViewer({
       container.removeEventListener('scroll', handleScroll)
       if (scrollRafRef.current != null) cancelAnimationFrame(scrollRafRef.current)
     }
-  }, [layoutReady, saveProgress, isRestoringRef, viewerSlot])
+  }, [layoutReady, saveProgress, isRestoringRef, patchPdfScale])
+
+  useEffect(() => {
+    const prev = layoutProfileRef.current
+    if (prev === layoutProfile) return
+
+    if (layoutReady && !isRestoringRef.current) {
+      const outgoing = pdfScaleProgressPatch(
+        viewerSlot,
+        prev,
+        scaleRef.current,
+        savedProgressRef.current
+      )
+      savedProgressRef.current = {
+        ...(savedProgressRef.current ?? { docPath: filePath, updatedAt: '' }),
+        ...outgoing
+      }
+      void flushProgress(outgoing)
+    }
+
+    void loadProgress().then((saved) => {
+      savedProgressRef.current = saved
+      const nextScale = savedPdfScale(saved, viewerSlot, layoutProfile)
+      layoutProfileRef.current = layoutProfile
+      if (nextScale == null || !layoutReady) return
+      isRestoringRef.current = true
+      const clamped = clampPdfScale(nextScale)
+      if (Math.abs(clamped - scaleRef.current) <= 0.001) {
+        isRestoringRef.current = false
+        return
+      }
+      scaleRef.current = clamped
+      displayScaleRef.current = clamped
+      isZoomPreviewRef.current = false
+      if (scaleCommitTimerRef.current) {
+        clearTimeout(scaleCommitTimerRef.current)
+        scaleCommitTimerRef.current = null
+      }
+      setScale(clamped)
+      setDisplayScale(clamped)
+      requestAnimationFrame(() => {
+        isRestoringRef.current = false
+      })
+    })
+  }, [
+    filePath,
+    flushProgress,
+    layoutProfile,
+    layoutReady,
+    loadProgress,
+    viewerSlot
+  ])
 
   useEffect(() => {
     const handleWheel = (e: WheelEvent): void => {

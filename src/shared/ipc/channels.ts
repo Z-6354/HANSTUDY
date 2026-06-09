@@ -14,7 +14,14 @@ export const IPC = {
   },
   readingProgress: {
     get: 'readingProgress:get',
-    save: 'readingProgress:save'
+    save: 'readingProgress:save',
+    listIndex: 'readingProgress:listIndex'
+  },
+  fileFavorites: {
+    list: 'fileFavorites:list',
+    toggle: 'fileFavorites:toggle',
+    remove: 'fileFavorites:remove',
+    rename: 'fileFavorites:rename'
   },
   workspaceSession: {
     get: 'workspaceSession:get',
@@ -23,6 +30,7 @@ export const IPC = {
   dialog: {
     openFile: 'dialog:openFile',
     openFolder: 'dialog:openFolder',
+    openImage: 'dialog:openImage',
     importFiles: 'dialog:importFiles',
     saveMarkdown: 'dialog:saveMarkdown',
     saveJson: 'dialog:saveJson',
@@ -31,6 +39,7 @@ export const IPC = {
   localLibrary: {
     list: 'localLibrary:list',
     getPath: 'localLibrary:getPath',
+    isPath: 'localLibrary:isPath',
     import: 'localLibrary:import'
   },
   fs: {
@@ -80,6 +89,9 @@ export const IPC = {
   appSettings: {
     get: 'appSettings:get',
     save: 'appSettings:save'
+  },
+  feedback: {
+    submit: 'feedback:submit'
   },
   skills: {
     list: 'skills:list',
@@ -144,6 +156,8 @@ export const IPC = {
     stopFindInPage: 'webGuest:stopFindInPage',
     getState: 'webGuest:getState',
     openDevTools: 'webGuest:openDevTools',
+    setZoomFactor: 'webGuest:setZoomFactor',
+    getZoomFactor: 'webGuest:getZoomFactor',
     event: 'webGuest:event'
   },
   mcp: {
@@ -153,5 +167,15 @@ export const IPC = {
   },
   backend: {
     getStatus: 'backend:getStatus'
+  },
+  screenshot: {
+    pickRegion: 'screenshot:pickRegion',
+    submit: 'screenshot:submit',
+    cancel: 'screenshot:cancel',
+    init: 'screenshot:init',
+    ready: 'screenshot:ready'
+  },
+  app: {
+    getEnvironment: 'app:getEnvironment'
   }
 } as const
